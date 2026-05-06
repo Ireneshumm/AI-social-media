@@ -1,0 +1,82 @@
+name: Reborn IG Post Publisher
+
+on:
+  workflow_dispatch:
+
+jobs:
+  publish-post:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Debug env presence
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+          ONEDRIVE_ROOT_PATH: ${{ secrets.ONEDRIVE_ROOT_PATH }}
+          ONEDRIVE_POSTS_FOLDER_NAME: ${{ secrets.ONEDRIVE_POSTS_FOLDER_NAME }}
+          ONEDRIVE_POSTED_FOLDER_NAME: ${{ secrets.ONEDRIVE_POSTED_FOLDER_NAME }}
+          ONEDRIVE_FAILED_FOLDER_NAME: ${{ secrets.ONEDRIVE_FAILED_FOLDER_NAME }}
+          ONEDRIVE_USER_EMAIL: ${{ secrets.ONEDRIVE_USER_EMAIL }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          PAGE_ACCESS_TOKEN: ${{ secrets.PAGE_ACCESS_TOKEN }}
+          META_GRAPH_API_VERSION: ${{ secrets.META_GRAPH_API_VERSION }}
+          DRY_RUN: ${{ secrets.DRY_RUN }}
+        run: |
+          python - <<'PY'
+          import os
+
+          keys = [
+              "OPENAI_API_KEY",
+              "OPENAI_MODEL",
+              "MS_TENANT_ID",
+              "MS_CLIENT_ID",
+              "MS_CLIENT_SECRET",
+              "ONEDRIVE_ROOT_PATH",
+              "ONEDRIVE_POSTS_FOLDER_NAME",
+              "ONEDRIVE_POSTED_FOLDER_NAME",
+              "ONEDRIVE_FAILED_FOLDER_NAME",
+              "ONEDRIVE_USER_EMAIL",
+              "IG_USER_ID",
+              "PAGE_ACCESS_TOKEN",
+              "META_GRAPH_API_VERSION",
+              "DRY_RUN",
+          ]
+
+          for k in keys:
+              print(f"{k}: {'OK' if os.getenv(k) else 'MISSING'}")
+          PY
+
+      - name: Run post publisher
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+          ONEDRIVE_ROOT_PATH: ${{ secrets.ONEDRIVE_ROOT_PATH }}
+          ONEDRIVE_POSTS_FOLDER_NAME: ${{ secrets.ONEDRIVE_POSTS_FOLDER_NAME }}
+          ONEDRIVE_POSTED_FOLDER_NAME: ${{ secrets.ONEDRIVE_POSTED_FOLDER_NAME }}
+          ONEDRIVE_FAILED_FOLDER_NAME: ${{ secrets.ONEDRIVE_FAILED_FOLDER_NAME }}
+          ONEDRIVE_USER_EMAIL: ${{ secrets.ONEDRIVE_USER_EMAIL }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          PAGE_ACCESS_TOKEN: ${{ secrets.PAGE_ACCESS_TOKEN }}
+          META_GRAPH_API_VERSION: ${{ secrets.META_GRAPH_API_VERSION }}
+          DRY_RUN: ${{ secrets.DRY_RUN }}
+        run: |
+          python post_publisher.py
