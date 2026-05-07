@@ -2,6 +2,8 @@ name: Reborn IG Post Publisher
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "23 23 * * *"
 
 jobs:
   publish-post:
