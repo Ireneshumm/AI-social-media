@@ -284,12 +284,26 @@ Requirements:
 - Return only the caption text
 """
 
-    response = client.responses.create(
-        model=OPENAI_MODEL,
-        input=prompt
-    )
+    retry_delays = [5, 10, 20]
+    last_error = None
 
-    return response.output_text.strip()
+    for attempt in range(1, 4):
+        try:
+            response = client.responses.create(
+                model=OPENAI_MODEL,
+                input=prompt
+            )
+            return response.output_text.strip()
+        except Exception as e:
+            last_error = e
+            print(f"OpenAI caption attempt {attempt} failed: {e}")
+
+            if attempt < 3:
+                delay = retry_delays[attempt - 1]
+                print(f"Retrying in {delay} second(s)...")
+                time.sleep(delay)
+
+    raise last_error
 
 
 # =========================
