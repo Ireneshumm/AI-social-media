@@ -297,6 +297,12 @@ Requirements:
         except Exception as e:
             last_error = e
             print(f"OpenAI caption attempt {attempt} failed: {e}")
+            print(f"Exception type: {type(e).__name__}")
+            print(f"Exception repr: {repr(e)}")
+
+            if e.__cause__ is not None:
+                print(f"Exception cause: {e.__cause__}")
+                print(f"Exception cause repr: {repr(e.__cause__)}")
 
             if attempt < 3:
                 delay = retry_delays[attempt - 1]
