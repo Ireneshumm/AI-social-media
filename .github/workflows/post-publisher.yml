@@ -11,6 +11,7 @@ on:
         options:
           - post
           - story
+          - health
   schedule:
     - cron: "25 6 * * *"
 
@@ -96,7 +97,9 @@ jobs:
         run: |
           echo "Selected publisher: ${PUBLISHER_TYPE}"
 
-          if [ "${PUBLISHER_TYPE}" = "story" ]; then
+          if [ "${PUBLISHER_TYPE}" = "health" ]; then
+            python health_check.py
+          elif [ "${PUBLISHER_TYPE}" = "story" ]; then
             python story_publisher.py
           else
             python post_publisher.py
