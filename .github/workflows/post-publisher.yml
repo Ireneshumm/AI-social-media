@@ -12,6 +12,7 @@ on:
           - post
           - story
           - health
+          - email_test
   schedule:
     - cron: "25 6 * * *"
 
@@ -50,6 +51,12 @@ jobs:
           PAGE_ACCESS_TOKEN: ${{ secrets.PAGE_ACCESS_TOKEN }}
           META_GRAPH_API_VERSION: ${{ secrets.META_GRAPH_API_VERSION }}
           DRY_RUN: ${{ secrets.DRY_RUN }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+          ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
         run: |
           python - <<'PY'
           import os
@@ -70,6 +77,12 @@ jobs:
               "PAGE_ACCESS_TOKEN",
               "META_GRAPH_API_VERSION",
               "DRY_RUN",
+              "SMTP_HOST",
+              "SMTP_PORT",
+              "SMTP_USERNAME",
+              "SMTP_PASSWORD",
+              "ALERT_EMAIL_TO",
+              "ALERT_EMAIL_FROM",
           ]
 
           for k in keys:
@@ -93,11 +106,19 @@ jobs:
           PAGE_ACCESS_TOKEN: ${{ secrets.PAGE_ACCESS_TOKEN }}
           META_GRAPH_API_VERSION: ${{ secrets.META_GRAPH_API_VERSION }}
           DRY_RUN: ${{ secrets.DRY_RUN }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+          ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
           PUBLISHER_TYPE: ${{ github.event.inputs.publisher_type || 'post' }}
         run: |
           echo "Selected publisher: ${PUBLISHER_TYPE}"
 
-          if [ "${PUBLISHER_TYPE}" = "health" ]; then
+          if [ "${PUBLISHER_TYPE}" = "email_test" ]; then
+            python send_test_alert.py
+          elif [ "${PUBLISHER_TYPE}" = "health" ]; then
             python health_check.py
           elif [ "${PUBLISHER_TYPE}" = "story" ]; then
             python story_publisher.py
