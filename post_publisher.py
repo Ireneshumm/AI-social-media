@@ -281,12 +281,28 @@ Requirements:
 - Add 3 to 5 relevant hashtags
 """
 
-    response = client.responses.create(
-        model=OPENAI_MODEL,
-        input=prompt
-    )
+    retry_delays = [5, 10]
+    last_error = None
 
-    return response.output_text.strip()
+    for attempt in range(1, 4):
+        try:
+            response = client.responses.create(
+                model=OPENAI_MODEL,
+                input=prompt
+            )
+            return response.output_text.strip()
+        except Exception as e:
+            last_error = e
+
+            if attempt < 3:
+                delay = retry_delays[attempt - 1]
+                print(f"WARNING: OpenAI caption attempt {attempt} failed: {e}")
+                print(f"Retrying in {delay} second(s)...")
+                time.sleep(delay)
+            else:
+                print(f"FAIL: OpenAI caption attempt {attempt} failed: {e}")
+
+    raise last_error
 
 
 # =========================
