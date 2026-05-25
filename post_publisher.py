@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import requests
+from datetime import datetime
 from dotenv import load_dotenv
 from msal import ConfidentialClientApplication
 from openai import OpenAI
@@ -168,13 +169,42 @@ def get_subfolder_by_path(token, top_folder_name, subfolder_name):
     return subfolder
 
 
-def move_item_to_folder(token, item_id, target_folder_id):
+def get_folder_children(token, folder_id):
+    url = f"https://graph.microsoft.com/v1.0/users/{ONEDRIVE_USER_EMAIL}/drive/items/{folder_id}/children"
+    children = graph_get(url, token)
+    return children.get("value", [])
+
+
+def filename_exists(items, filename):
+    filename_lower = filename.lower()
+    return any(item.get("name", "").lower() == filename_lower for item in items)
+
+
+def add_timestamp_suffix(filename, timestamp):
+    base, ext = os.path.splitext(filename)
+    return f"{base}_{timestamp}{ext}"
+
+
+def get_conflict_safe_name(items, filename, timestamp):
+    if not filename_exists(items, filename):
+        return filename
+
+    new_name = add_timestamp_suffix(filename, timestamp)
+    print(f"Filename conflict detected in archive folder: {filename}")
+    print(f"Renaming during move: {filename} -> {new_name}")
+    return new_name
+
+
+def move_item_to_folder(token, item_id, target_folder_id, new_name=None):
     url = f"https://graph.microsoft.com/v1.0/users/{ONEDRIVE_USER_EMAIL}/drive/items/{item_id}"
     payload = {
         "parentReference": {
             "id": target_folder_id
         }
     }
+    if new_name:
+        payload["name"] = new_name
+
     return graph_patch(url, token, payload)
 
 
@@ -184,14 +214,37 @@ def archive_post_assets(token, selected_post, success=True):
 
     image_item = selected_post["image"]
     text_item = selected_post["text"]
+    target_items = get_folder_children(token, target_subfolder["id"])
+    archive_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    move_item_to_folder(token, image_item["id"], target_subfolder["id"])
-    move_item_to_folder(token, text_item["id"], target_subfolder["id"])
+    image_name = get_conflict_safe_name(
+        target_items,
+        image_item["name"],
+        archive_timestamp,
+    )
+    text_name = get_conflict_safe_name(
+        target_items,
+        text_item["name"],
+        archive_timestamp,
+    )
+
+    move_item_to_folder(
+        token,
+        image_item["id"],
+        target_subfolder["id"],
+        image_name if image_name != image_item["name"] else None,
+    )
+    move_item_to_folder(
+        token,
+        text_item["id"],
+        target_subfolder["id"],
+        text_name if text_name != text_item["name"] else None,
+    )
 
     return {
         "target_folder": f"{target_top}/{ONEDRIVE_POSTS_FOLDER_NAME}",
-        "image_name": image_item["name"],
-        "text_name": text_item["name"],
+        "image_name": image_name,
+        "text_name": text_name,
     }
 
 
