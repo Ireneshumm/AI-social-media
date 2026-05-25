@@ -368,6 +368,45 @@ Requirements:
 # =========================
 # Instagram publish
 # =========================
+def post_with_retry(url, payload, timeout=60, label="Instagram Graph request"):
+    retry_delays = [5, 10]
+    last_error = None
+
+    for attempt in range(1, 4):
+        try:
+            resp = requests.post(url, data=payload, timeout=timeout)
+            resp.raise_for_status()
+            return resp
+        except requests.HTTPError as e:
+            last_error = e
+            status_code = e.response.status_code if e.response is not None else None
+            should_retry = status_code is not None and 500 <= status_code < 600
+
+            if not should_retry:
+                print(f"FAIL: {label} failed with non-retryable HTTP error on attempt {attempt}: {e}")
+                raise
+
+            if attempt < 3:
+                delay = retry_delays[attempt - 1]
+                print(f"WARNING: {label} attempt {attempt} failed with HTTP {status_code}: {e}")
+                print(f"Retrying in {delay} second(s)...")
+                time.sleep(delay)
+            else:
+                print(f"FAIL: {label} attempt {attempt} failed with HTTP {status_code}: {e}")
+        except requests.RequestException as e:
+            last_error = e
+
+            if attempt < 3:
+                delay = retry_delays[attempt - 1]
+                print(f"WARNING: {label} attempt {attempt} failed: {e}")
+                print(f"Retrying in {delay} second(s)...")
+                time.sleep(delay)
+            else:
+                print(f"FAIL: {label} attempt {attempt} failed: {e}")
+
+    raise last_error
+
+
 def create_story_media_container(image_url, caption):
     url = f"{GRAPH_BASE}/{IG_USER_ID}/media"
     payload = {
@@ -376,8 +415,7 @@ def create_story_media_container(image_url, caption):
         "caption": caption,
         "access_token": PAGE_ACCESS_TOKEN,
     }
-    resp = requests.post(url, data=payload, timeout=60)
-    resp.raise_for_status()
+    resp = post_with_retry(url, payload, timeout=60, label="create_story_media_container")
     return resp.json()
 
 
@@ -387,8 +425,7 @@ def publish_media_container(creation_id):
         "creation_id": creation_id,
         "access_token": PAGE_ACCESS_TOKEN,
     }
-    resp = requests.post(url, data=payload, timeout=60)
-    resp.raise_for_status()
+    resp = post_with_retry(url, payload, timeout=60, label="publish_media_container")
     return resp.json()
 
 
