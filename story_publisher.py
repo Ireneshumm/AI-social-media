@@ -84,27 +84,79 @@ def get_access_token():
     return result["access_token"]
 
 
-def graph_get(url, token):
+def get_retry_delay(resp, attempt):
+    retry_after = resp.headers.get("Retry-After") if resp is not None else None
+    if retry_after:
+        try:
+            return int(retry_after)
+        except ValueError:
+            pass
+
+    retry_delays = [5, 10]
+    return retry_delays[attempt - 1]
+
+
+def request_with_retry(method, url, token, payload=None, timeout=30, label="Microsoft Graph request"):
     headers = {"Authorization": f"Bearer {token}"}
-    resp = requests.get(url, headers=headers, timeout=30)
-    resp.raise_for_status()
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+
+    last_error = None
+
+    for attempt in range(1, 4):
+        try:
+            resp = requests.request(
+                method,
+                url,
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            return resp
+        except requests.HTTPError as e:
+            last_error = e
+            resp = e.response
+            status_code = resp.status_code if resp is not None else None
+            should_retry = status_code == 429 or (
+                status_code is not None and 500 <= status_code < 600
+            )
+
+            if not should_retry:
+                print(f"FAIL: {label} failed with non-retryable HTTP error on attempt {attempt}: {e}")
+                raise
+
+            if attempt < 3:
+                delay = get_retry_delay(resp, attempt)
+                print(f"WARNING: {label} attempt {attempt} failed with HTTP {status_code}. Retrying in {delay} second(s)...")
+                time.sleep(delay)
+            else:
+                print(f"FAIL: {label} attempt {attempt} failed with HTTP {status_code}: {e}")
+        except requests.RequestException as e:
+            last_error = e
+
+            if attempt < 3:
+                delay = get_retry_delay(None, attempt)
+                print(f"WARNING: {label} attempt {attempt} failed. Retrying in {delay} second(s): {e}")
+                time.sleep(delay)
+            else:
+                print(f"FAIL: {label} attempt {attempt} failed: {e}")
+
+    raise last_error
+
+
+def graph_get(url, token):
+    resp = request_with_retry("GET", url, token, timeout=30, label="Microsoft Graph GET")
     return resp.json()
 
 
 def graph_get_bytes(url, token):
-    headers = {"Authorization": f"Bearer {token}"}
-    resp = requests.get(url, headers=headers, timeout=30)
-    resp.raise_for_status()
+    resp = request_with_retry("GET", url, token, timeout=30, label="Microsoft Graph download")
     return resp.content
 
 
 def graph_patch(url, token, payload):
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-    resp = requests.patch(url, headers=headers, json=payload, timeout=30)
-    resp.raise_for_status()
+    resp = request_with_retry("PATCH", url, token, payload=payload, timeout=30, label="Microsoft Graph PATCH")
     return resp.json()
 
 
