@@ -36,4 +36,4 @@ if __name__ == "__main__":
     print(f"filename: {filename}")
     print(f"is_supported_image: {is_supported_image_file(filename)}")
     print(f"brief: {filename_to_brief(filename)}")
-# Temporary workflow trigger test
+
