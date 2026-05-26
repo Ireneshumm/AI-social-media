@@ -1,6 +1,14 @@
 name: Reborn IG Post Publisher
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/post-publisher.yml"
+      - "post_publisher.py"
+      - "wordpress_media.py"
+      - "asset_helpers.py"
   workflow_dispatch:
     inputs:
       publisher_type:
@@ -135,8 +143,10 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 3 * * 1" ]; then
             PUBLISHER_TYPE="token_check"
-          else
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             PUBLISHER_TYPE="${{ inputs.publisher_type }}"
+          else
+            PUBLISHER_TYPE="post"
           fi
 
           echo "Selected publisher: ${PUBLISHER_TYPE}"
@@ -171,8 +181,10 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 3 * * 1" ]; then
             export PUBLISHER_TYPE="token_check"
-          else
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             export PUBLISHER_TYPE="${{ inputs.publisher_type }}"
+          else
+            export PUBLISHER_TYPE="post"
           fi
 
           python - <<'PY'
