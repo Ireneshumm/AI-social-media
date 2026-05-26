@@ -13,6 +13,7 @@ on:
           - story
           - health
           - email_test
+          - token_check
   schedule:
     - cron: "25 6 * * *"
 
@@ -38,6 +39,8 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+          META_APP_ID: ${{ secrets.META_APP_ID }}
+          META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
           MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
           MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
@@ -65,6 +68,8 @@ jobs:
           keys = [
               "OPENAI_API_KEY",
               "OPENAI_MODEL",
+              "META_APP_ID",
+              "META_APP_SECRET",
               "MS_TENANT_ID",
               "MS_CLIENT_ID",
               "MS_CLIENT_SECRET",
@@ -95,6 +100,8 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+          META_APP_ID: ${{ secrets.META_APP_ID }}
+          META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
           MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
           MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
@@ -119,7 +126,9 @@ jobs:
         run: |
           echo "Selected publisher: ${PUBLISHER_TYPE}"
 
-          if [ "${PUBLISHER_TYPE}" = "email_test" ]; then
+          if [ "${PUBLISHER_TYPE}" = "token_check" ]; then
+            python token_maintenance.py
+          elif [ "${PUBLISHER_TYPE}" = "email_test" ]; then
             python send_test_alert.py
           elif [ "${PUBLISHER_TYPE}" = "health" ]; then
             python health_check.py
