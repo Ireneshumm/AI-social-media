@@ -3,9 +3,12 @@ import sys
 import time
 import requests
 from datetime import datetime
+from pathlib import Path
 from dotenv import load_dotenv
 from msal import ConfidentialClientApplication
 from openai import OpenAI
+from asset_helpers import is_supported_image_file, filename_to_brief
+from wordpress_media import upload_media
 
 load_dotenv()
 
@@ -265,18 +268,12 @@ def archive_post_assets(token, selected_post, success=True):
     target_subfolder = get_subfolder_by_path(token, target_top, ONEDRIVE_POSTS_FOLDER_NAME)
 
     image_item = selected_post["image"]
-    text_item = selected_post["text"]
     target_items = get_folder_children(token, target_subfolder["id"])
     archive_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     image_name = get_conflict_safe_name(
         target_items,
         image_item["name"],
-        archive_timestamp,
-    )
-    text_name = get_conflict_safe_name(
-        target_items,
-        text_item["name"],
         archive_timestamp,
     )
 
@@ -286,65 +283,31 @@ def archive_post_assets(token, selected_post, success=True):
         target_subfolder["id"],
         image_name if image_name != image_item["name"] else None,
     )
-    move_item_to_folder(
-        token,
-        text_item["id"],
-        target_subfolder["id"],
-        text_name if text_name != text_item["name"] else None,
-    )
 
     return {
         "target_folder": f"{target_top}/{ONEDRIVE_POSTS_FOLDER_NAME}",
         "image_name": image_name,
-        "text_name": text_name,
     }
 
 
 # =========================
 # Asset matching
 # =========================
-def split_name(filename):
-    base, ext = os.path.splitext(filename)
-    return base, ext.lower()
-
-
 def match_post_assets(items):
-    grouped = {}
-
+    matched = []
     for item in items:
         if "folder" in item:
             continue
 
         name = item.get("name", "")
-        base, ext = split_name(name)
-
-        if base not in grouped:
-            grouped[base] = {"image": None, "text": None}
-
-        if ext in IMAGE_EXTENSIONS:
-            grouped[base]["image"] = item
-        elif ext == ".txt":
-            grouped[base]["text"] = item
-
-    matched = []
-    incomplete = []
-
-    for base, assets in grouped.items():
-        if assets["image"] and assets["text"]:
+        if is_supported_image_file(name):
             matched.append({
-                "base_name": base,
-                "image": assets["image"],
-                "text": assets["text"],
-            })
-        else:
-            incomplete.append({
-                "base_name": base,
-                "has_image": assets["image"] is not None,
-                "has_text": assets["text"] is not None,
+                "base_name": os.path.splitext(name)[0],
+                "image": item,
             })
 
     matched.sort(key=lambda x: x["base_name"])
-    return matched, incomplete
+    return matched
 
 
 # =========================
@@ -505,56 +468,28 @@ def main():
         items = get_posts_items(token)
         print(f"Found {len(items)} item(s) in posts/\n")
 
-        print("Step 3: Matching post assets...")
-        matched, incomplete = match_post_assets(items)
-
-        if incomplete:
-            print("Incomplete asset groups detected:")
-            for item in incomplete:
-                print(
-                    f"- {item['base_name']} | has_image={item['has_image']} | has_text={item['has_text']}"
-                )
-            print()
+        print("Step 3: Finding post image assets...")
+        matched = match_post_assets(items)
 
         if not matched:
-            print("No valid matched post assets found. Exit gracefully.")
+            print("No valid post image assets found. Exit gracefully.")
             sys.exit(0)
 
         selected_post = matched[0]
         print(f"Selected post: {selected_post['base_name']}")
-        print(f"Image file: {selected_post['image']['name']}")
-        print(f"Text file : {selected_post['text']['name']}\n")
+        print(f"Image file: {selected_post['image']['name']}\n")
 
-        print("Step 4: Downloading text brief...")
-        text_bytes = download_file(token, selected_post["text"]["id"])
-        text_content = decode_text_file(text_bytes)
-        print("Text brief loaded.\n")
-
-        image_url, brief_text = parse_post_text(text_content)
-
-        if not image_url:
-            raise Exception("image_url not found in txt file.")
+        print("Step 4: Generating brief from image filename...")
+        brief_text = filename_to_brief(selected_post["image"]["name"])
 
         if not brief_text:
             raise Exception("Brief text is empty.")
 
-        print("Parsed image_url:")
-        print(image_url)
-        print()
-
-        print("Parsed brief text:")
+        print("Generated brief text:")
         print(brief_text)
         print()
 
-        print("Step 5: Generating caption with OpenAI...")
-        caption = generate_caption(brief_text)
-        print("Caption generated.\n")
-
-        print("Generated caption:")
-        print(caption)
-        print()
-
-        print("Step 6: Downloading image file for local verification...")
+        print("Step 5: Downloading image file for local verification...")
         image_bytes = download_file(token, selected_post["image"]["id"])
         os.makedirs("temp", exist_ok=True)
         image_path = os.path.join("temp", selected_post["image"]["name"])
@@ -565,11 +500,30 @@ def main():
         print(f"Image saved to: {image_path}")
         print(f"Image size: {len(image_bytes)} bytes\n")
 
+        print("Step 6: Uploading image to WordPress Media Library...")
+        media_result = upload_media(Path(image_path))
+        image_url = media_result.get("source_url")
+
+        if not image_url:
+            raise RuntimeError("WordPress media upload did not return source_url.")
+
+        print("WordPress source_url:")
+        print(image_url)
+        print()
+
+        print("Step 7: Generating caption with OpenAI...")
+        caption = generate_caption(brief_text)
+        print("Caption generated.\n")
+
+        print("Generated caption:")
+        print(caption)
+        print()
+
         if DRY_RUN:
             print("DRY_RUN=true, skipping Instagram publish.")
             sys.exit(0)
 
-        print("Step 7: Publishing to Instagram...")
+        print("Step 8: Publishing to Instagram...")
         publish_result = publish_instagram_post(image_url, caption)
         print("Instagram publish completed.\n")
 
@@ -578,12 +532,11 @@ def main():
         print(f"media_id   : {publish_result['media_id']}")
         print()
 
-        print("Step 8: Archiving success items to posted/posts...")
+        print("Step 9: Archiving success item to posted/posts...")
         archive_result = archive_post_assets(token, selected_post, success=True)
         print("Archive completed.")
         print(f"Moved to: {archive_result['target_folder']}")
         print(f"Image: {archive_result['image_name']}")
-        print(f"Text : {archive_result['text_name']}")
         print()
 
         print("Post MVP completed successfully.")
@@ -599,7 +552,6 @@ def main():
                 print("Failed asset archive completed.")
                 print(f"Moved to: {archive_result['target_folder']}")
                 print(f"Image: {archive_result['image_name']}")
-                print(f"Text : {archive_result['text_name']}")
             except Exception as archive_error:
                 print("Failed to archive failed items:", str(archive_error))
 
