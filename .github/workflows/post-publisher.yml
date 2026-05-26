@@ -132,8 +132,13 @@ jobs:
           ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
           ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
           ALERT_EMAIL_ENABLED: ${{ secrets.ALERT_EMAIL_ENABLED }}
-          PUBLISHER_TYPE: ${{ github.event_name == 'schedule' && github.event.schedule == '0 3 * * 1' && 'token_check' || github.event.inputs.publisher_type || 'post' }}
         run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 3 * * 1" ]; then
+            PUBLISHER_TYPE="token_check"
+          else
+            PUBLISHER_TYPE="${{ github.event.inputs.publisher_type || 'post' }}"
+          fi
+
           echo "Selected publisher: ${PUBLISHER_TYPE}"
 
           if [ "${PUBLISHER_TYPE}" = "token_check" ]; then
@@ -158,13 +163,18 @@ jobs:
           ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
           ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
           ALERT_EMAIL_ENABLED: ${{ secrets.ALERT_EMAIL_ENABLED }}
-          PUBLISHER_TYPE: ${{ github.event_name == 'schedule' && github.event.schedule == '0 3 * * 1' && 'token_check' || github.event.inputs.publisher_type || 'post' }}
           WORKFLOW_NAME: ${{ github.workflow }}
           RUN_ID: ${{ github.run_id }}
           RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GITHUB_REF_VALUE: ${{ github.ref }}
           COMMIT_SHA: ${{ github.sha }}
         run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 3 * * 1" ]; then
+            export PUBLISHER_TYPE="token_check"
+          else
+            export PUBLISHER_TYPE="${{ github.event.inputs.publisher_type || 'post' }}"
+          fi
+
           python - <<'PY'
           import os
           from alert_email import send_alert_email
