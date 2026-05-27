@@ -4,6 +4,7 @@ import requests
 import msal
 from dotenv import load_dotenv
 from openai import OpenAI
+from alert_email import send_alert_safely
 
 
 load_dotenv()
@@ -37,6 +38,18 @@ def log_fail(message):
 
 def log_info(message):
     print(f"[INFO] {message}")
+
+
+def send_health_failure_alert(reason):
+    send_alert_safely(
+        "Reborn IG Auto Publisher Health Check Failed",
+        "\n".join([
+            "The Reborn Instagram Auto Publisher health check failed.",
+            f"Reason: {reason}",
+            "",
+            "Please check GitHub Actions logs and environment variables.",
+        ]),
+    )
 
 
 def check_env_vars():
@@ -275,6 +288,7 @@ def main():
         all_ok = False
         print("=" * 60)
         log_fail("Health check stopped because required env vars are missing")
+        send_health_failure_alert("Required environment variables are missing.")
         sys.exit(1)
 
     access_token = get_graph_access_token()
@@ -298,6 +312,7 @@ def main():
         sys.exit(0)
 
     log_fail("Some health checks failed")
+    send_health_failure_alert("One or more health checks failed.")
     sys.exit(1)
 
 

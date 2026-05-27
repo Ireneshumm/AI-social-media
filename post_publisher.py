@@ -9,6 +9,7 @@ from msal import ConfidentialClientApplication
 from openai import OpenAI
 from asset_helpers import is_supported_image_file, filename_to_brief
 from wordpress_media import upload_media
+from alert_email import send_alert_safely
 
 load_dotenv()
 
@@ -544,6 +545,7 @@ def main():
 
     except Exception as e:
         print("\nERROR:", str(e))
+        archive_status = "No archive attempted."
 
         if token and selected_post:
             try:
@@ -552,8 +554,31 @@ def main():
                 print("Failed asset archive completed.")
                 print(f"Moved to: {archive_result['target_folder']}")
                 print(f"Image: {archive_result['image_name']}")
+                archive_status = (
+                    "Failed asset archive completed. "
+                    f"Moved to {archive_result['target_folder']}. "
+                    f"Image: {archive_result['image_name']}."
+                )
             except Exception as archive_error:
                 print("Failed to archive failed items:", str(archive_error))
+                archive_status = f"Failed to archive failed item: {archive_error}"
+
+        failed_image_name = (
+            selected_post["image"]["name"]
+            if selected_post and selected_post.get("image")
+            else "not available"
+        )
+        send_alert_safely(
+            "Reborn IG Auto Publisher Failed: post",
+            "\n".join([
+                "Instagram Post publishing failed.",
+                f"Failed image: {failed_image_name}",
+                f"Error: {e}",
+                f"Archive status: {archive_status}",
+                "",
+                "Please check GitHub Actions logs and the OneDrive failed/posts folder.",
+            ]),
+        )
 
         sys.exit(1)
 
