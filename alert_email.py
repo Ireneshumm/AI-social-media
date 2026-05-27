@@ -14,14 +14,6 @@ if load_dotenv:
 # =========================
 # Config
 # =========================
-ALERT_EMAIL_ENABLED = os.getenv("ALERT_EMAIL_ENABLED", "false")
-SMTP_HOST = os.getenv("SMTP_HOST")
-SMTP_PORT = os.getenv("SMTP_PORT")
-SMTP_USERNAME = os.getenv("SMTP_USERNAME")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
-ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO")
-ALERT_EMAIL_FROM = os.getenv("ALERT_EMAIL_FROM")
-
 REQUIRED_SMTP_ENV_VARS = [
     "SMTP_HOST",
     "SMTP_PORT",
@@ -36,7 +28,7 @@ REQUIRED_SMTP_ENV_VARS = [
 # Helpers
 # =========================
 def alert_email_enabled():
-    return ALERT_EMAIL_ENABLED.lower() == "true"
+    return os.getenv("ALERT_EMAIL_ENABLED", "false").lower() == "true"
 
 
 def get_missing_smtp_env_vars():
@@ -44,25 +36,25 @@ def get_missing_smtp_env_vars():
 
 
 def get_recipients():
+    recipients = os.getenv("ALERT_EMAIL_TO", "")
     return [
         recipient.strip()
-        for recipient in ALERT_EMAIL_TO.split(",")
+        for recipient in recipients.split(",")
         if recipient.strip()
     ]
 
 
 def get_smtp_port():
     try:
-        return int(SMTP_PORT)
+        return int(os.getenv("SMTP_PORT", ""))
     except ValueError:
-        print("WARN: SMTP_PORT must be a number.")
-        return None
+        raise RuntimeError("SMTP_PORT must be a number.")
 
 
 def build_message(subject, body, recipients):
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = ALERT_EMAIL_FROM
+    msg["From"] = os.getenv("ALERT_EMAIL_FROM")
     msg["To"] = ", ".join(recipients)
     msg.set_content(body)
     return msg
@@ -71,47 +63,49 @@ def build_message(subject, body, recipients):
 # =========================
 # Public API
 # =========================
-def send_alert_email(subject: str, body: str) -> bool:
+def send_alert(subject: str, body: str) -> bool:
     if not alert_email_enabled():
         print("INFO: Alert email is disabled. Set ALERT_EMAIL_ENABLED=true to enable.")
         return False
 
     missing = get_missing_smtp_env_vars()
     if missing:
-        print(
-            "WARN: Alert email not sent. Missing required environment variables: "
+        raise RuntimeError(
+            "Missing required alert email environment variables: "
             + ", ".join(missing)
         )
-        return False
 
     recipients = get_recipients()
     if not recipients:
-        print("WARN: Alert email not sent. ALERT_EMAIL_TO has no valid recipients.")
-        return False
+        raise RuntimeError("ALERT_EMAIL_TO has no valid recipients.")
 
     port = get_smtp_port()
-    if port is None:
-        return False
-
     msg = build_message(subject, body, recipients)
 
+    print("Sending alert email...")
+    with smtplib.SMTP(os.getenv("SMTP_HOST"), port, timeout=30) as server:
+        server.starttls()
+        server.login(os.getenv("SMTP_USERNAME"), os.getenv("SMTP_PASSWORD"))
+        server.send_message(msg)
+
+    print("PASS: Alert email sent successfully.")
+    return True
+
+
+def send_alert_safely(subject: str, body: str) -> bool:
     try:
-        print("Sending alert email...")
-        with smtplib.SMTP(SMTP_HOST, port, timeout=30) as server:
-            server.starttls()
-            server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            server.send_message(msg)
-
-        print("PASS: Alert email sent successfully.")
-        return True
-
+        return send_alert(subject, body)
     except Exception as e:
-        print("FAIL: Alert email failed to send:", str(e))
+        print("WARN: Alert email failed to send:", str(e))
         return False
+
+
+def send_alert_email(subject: str, body: str) -> bool:
+    return send_alert_safely(subject, body)
 
 
 if __name__ == "__main__":
-    send_alert_email(
+    send_alert_safely(
         "Reborn IG Auto Publisher Alert Helper Test",
         "This is a test from alert_email.py. No Instagram content was published.",
     )

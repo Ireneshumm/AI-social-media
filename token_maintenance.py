@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timezone
 
 import requests
+from alert_email import send_alert_safely
 
 try:
     from dotenv import load_dotenv
@@ -149,6 +150,15 @@ def main():
 
         if not is_valid:
             print("FAIL: PAGE_ACCESS_TOKEN is invalid.")
+            send_alert_safely(
+                "Reborn IG Auto Publisher Token Invalid",
+                "\n".join([
+                    "Meta Page Access Token is invalid.",
+                    "The token maintenance check failed validation.",
+                    "",
+                    "Please check GitHub Actions logs and update the token if needed.",
+                ]),
+            )
             sys.exit(1)
 
         print("Step 2: Verifying token can access IG user...")
@@ -158,6 +168,15 @@ def main():
 
         if days_remaining is not None and days_remaining < 10:
             print("WARNING: PAGE_ACCESS_TOKEN expires within 10 days.")
+            send_alert_safely(
+                "Reborn IG Auto Publisher Token Expiring Soon",
+                "\n".join([
+                    "Meta Page Access Token has less than 10 days remaining.",
+                    f"Days remaining: {days_remaining}",
+                    "",
+                    "Please plan a token refresh before expiry.",
+                ]),
+            )
             sys.exit(0)
 
         print("PASS: PAGE_ACCESS_TOKEN is valid and not near expiry.")
@@ -165,6 +184,15 @@ def main():
 
     except Exception as e:
         print("FAIL:", str(e))
+        send_alert_safely(
+            "Reborn IG Auto Publisher Token Check Failed",
+            "\n".join([
+                "Meta token maintenance check failed with an exception.",
+                f"Error: {e}",
+                "",
+                "Please check GitHub Actions logs and token-related environment variables.",
+            ]),
+        )
         sys.exit(1)
 
 
