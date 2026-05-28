@@ -1,24 +1,9 @@
-name: Reborn IG Post Publisher
+name: Reborn IG Story Publisher
 
 on:
   workflow_dispatch:
-    inputs:
-      publisher_type:
-        description: Choose publisher to run
-        required: true
-        default: post
-        type: choice
-        options:
-          - post
-          - story
-          - health
-          - email_test
-          - token_check
   schedule:
-    - cron: "10 23 * * *"
-    - cron: "10 3 * * *"
-    - cron: "10 7 * * *"
-    - cron: "0 3 * * 1"
+    - cron: "25 * * * *"
 
 permissions:
   contents: read
@@ -28,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish-post:
+  publish-story:
     runs-on: ubuntu-latest
 
     steps:
@@ -112,7 +97,7 @@ jobs:
               print(f"{k}: {'OK' if os.getenv(k) else 'MISSING'}")
           PY
 
-      - name: Run selected publisher
+      - name: Run story publisher
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
@@ -142,24 +127,5 @@ jobs:
           ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
           ALERT_EMAIL_ENABLED: ${{ secrets.ALERT_EMAIL_ENABLED }}
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 3 * * 1" ]; then
-            PUBLISHER_TYPE="token_check"
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            PUBLISHER_TYPE="${{ inputs.publisher_type }}"
-          else
-            PUBLISHER_TYPE="post"
-          fi
-
-          echo "Selected publisher: ${PUBLISHER_TYPE}"
-
-          if [ "${PUBLISHER_TYPE}" = "token_check" ]; then
-            python token_maintenance.py
-          elif [ "${PUBLISHER_TYPE}" = "email_test" ]; then
-            python send_test_alert.py
-          elif [ "${PUBLISHER_TYPE}" = "health" ]; then
-            python health_check.py
-          elif [ "${PUBLISHER_TYPE}" = "story" ]; then
-            python story_publisher.py
-          else
-            python post_publisher.py
-          fi
+          echo "Selected publisher: story"
+          python story_publisher.py
