@@ -390,6 +390,17 @@ Requirements:
 # =========================
 # Instagram publish
 # =========================
+def print_error_response(error):
+    resp = getattr(error, "response", None)
+    if resp is None:
+        return
+
+    body = resp.text
+    if body:
+        print("Instagram Graph API error response:")
+        print(body)
+
+
 def post_with_retry(url, payload, timeout=60, label="Instagram Graph request"):
     retry_delays = [5, 10]
     last_error = None
@@ -406,6 +417,7 @@ def post_with_retry(url, payload, timeout=60, label="Instagram Graph request"):
 
             if not should_retry:
                 print(f"FAIL: {label} failed with non-retryable HTTP error on attempt {attempt}: {e}")
+                print_error_response(e)
                 raise
 
             if attempt < 3:
@@ -415,6 +427,7 @@ def post_with_retry(url, payload, timeout=60, label="Instagram Graph request"):
                 time.sleep(delay)
             else:
                 print(f"FAIL: {label} attempt {attempt} failed with HTTP {status_code}: {e}")
+                print_error_response(e)
         except requests.RequestException as e:
             last_error = e
 
