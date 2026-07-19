@@ -10,6 +10,7 @@ from openai import OpenAI
 from asset_helpers import is_supported_media_file, get_media_kind, filename_to_brief
 from wordpress_media import upload_media
 from alert_email import send_alert_safely
+from facebook_publish import publish_facebook_post, FB_PUBLISH_ENABLED
 
 load_dotenv()
 
@@ -622,6 +623,26 @@ def main():
         print(f"creation_id: {publish_result['creation_id']}")
         print(f"media_id   : {publish_result['media_id']}")
         print()
+
+        if FB_PUBLISH_ENABLED:
+            print("Step 8b: Cross-posting to Facebook Page...")
+            try:
+                fb_result = publish_facebook_post(media_url, caption, media_kind)
+                print(f"Facebook post published: {fb_result}\n")
+            except Exception as fb_error:
+                # Instagram already succeeded; a Facebook failure must not fail
+                # the run. Surface it via logs and a non-fatal alert instead.
+                print(f"WARNING: Facebook cross-post failed (Instagram already succeeded): {fb_error}\n")
+                send_alert_safely(
+                    "Reborn Auto Publisher: Facebook cross-post failed (post)",
+                    "\n".join([
+                        "Instagram post succeeded but the Facebook cross-post failed.",
+                        f"Media: {selected_post['media']['name']}",
+                        f"Error: {fb_error}",
+                        "",
+                        "Please check GitHub Actions logs. The Instagram post was published normally.",
+                    ]),
+                )
 
         print("Step 9: Archiving success item to posted/posts...")
         archive_result = archive_post_assets(token, selected_post, success=True)
