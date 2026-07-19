@@ -26,7 +26,13 @@ CONTENT_TYPES = {
     ".jpeg": "image/jpeg",
     ".png": "image/png",
     ".webp": "image/webp",
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
 }
+
+# Images upload quickly; videos are much larger and need a longer window.
+IMAGE_UPLOAD_TIMEOUT = 60
+VIDEO_UPLOAD_TIMEOUT = 300
 
 
 # =========================
@@ -40,47 +46,53 @@ def validate_env():
         )
 
 
-def get_content_type(image_path):
-    ext = image_path.suffix.lower()
+def get_content_type(media_path):
+    ext = media_path.suffix.lower()
     content_type = CONTENT_TYPES.get(ext)
 
     if not content_type:
-        raise RuntimeError(f"Unsupported image extension: {ext}")
+        raise RuntimeError(f"Unsupported media extension: {ext}")
 
     return content_type
 
 
-def validate_image_path(image_path):
-    if not image_path.exists():
-        raise RuntimeError(f"Image file not found: {image_path}")
+def validate_media_path(media_path):
+    if not media_path.exists():
+        raise RuntimeError(f"Media file not found: {media_path}")
 
-    if not image_path.is_file():
-        raise RuntimeError(f"Image path is not a file: {image_path}")
+    if not media_path.is_file():
+        raise RuntimeError(f"Media path is not a file: {media_path}")
 
 
 # =========================
 # WordPress upload
 # =========================
-def upload_media(image_path):
+def upload_media(media_path):
     validate_env()
-    validate_image_path(image_path)
+    validate_media_path(media_path)
 
     url = f"{WP_BASE_URL.rstrip('/')}/wp-json/wp/v2/media"
-    content_type = get_content_type(image_path)
-    filename = image_path.name
+    content_type = get_content_type(media_path)
+    filename = media_path.name
+
+    timeout = (
+        VIDEO_UPLOAD_TIMEOUT
+        if content_type.startswith("video/")
+        else IMAGE_UPLOAD_TIMEOUT
+    )
 
     headers = {
         "Content-Type": content_type,
         "Content-Disposition": f'attachment; filename="{filename}"',
     }
 
-    with image_path.open("rb") as f:
+    with media_path.open("rb") as f:
         resp = requests.post(
             url,
             headers=headers,
             data=f,
             auth=(WP_USERNAME, WP_APP_PASSWORD),
-            timeout=60,
+            timeout=timeout,
         )
 
     if not resp.ok:
@@ -104,8 +116,8 @@ def main():
         sys.exit(1)
 
     try:
-        image_path = Path(sys.argv[1])
-        upload_media(image_path)
+        media_path = Path(sys.argv[1])
+        upload_media(media_path)
         sys.exit(0)
 
     except Exception as e:

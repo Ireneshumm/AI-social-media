@@ -7,7 +7,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from msal import ConfidentialClientApplication
 from openai import OpenAI
-from asset_helpers import is_supported_image_file, filename_to_brief
+from asset_helpers import is_supported_media_file, get_media_kind, filename_to_brief
 from wordpress_media import upload_media
 from alert_email import send_alert_safely
 
@@ -33,6 +33,11 @@ IG_USER_ID = os.getenv("IG_USER_ID")
 PAGE_ACCESS_TOKEN = os.getenv("PAGE_ACCESS_TOKEN")
 GRAPH_VERSION = os.getenv("META_GRAPH_API_VERSION", "v23.0")
 DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
+
+# Video containers are processed asynchronously by Instagram, so we poll the
+# container status before publishing. Defaults give up to ~5 minutes.
+VIDEO_POLL_MAX_ATTEMPTS = int(os.getenv("VIDEO_POLL_MAX_ATTEMPTS", "30"))
+VIDEO_POLL_INTERVAL = int(os.getenv("VIDEO_POLL_INTERVAL", "10"))
 
 AUTHORITY = f"https://login.microsoftonline.com/{MS_TENANT_ID}"
 SCOPES = ["https://graph.microsoft.com/.default"]
@@ -268,26 +273,26 @@ def archive_story_assets(token, selected_story, success=True):
     target_top = ONEDRIVE_POSTED_FOLDER_NAME if success else ONEDRIVE_FAILED_FOLDER_NAME
     target_subfolder = get_subfolder_by_path(token, target_top, ONEDRIVE_STORIES_FOLDER_NAME)
 
-    image_item = selected_story["image"]
+    media_item = selected_story["media"]
     target_items = get_folder_children(token, target_subfolder["id"])
     archive_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    image_name = get_conflict_safe_name(
+    media_name = get_conflict_safe_name(
         target_items,
-        image_item["name"],
+        media_item["name"],
         archive_timestamp,
     )
 
     move_item_to_folder(
         token,
-        image_item["id"],
+        media_item["id"],
         target_subfolder["id"],
-        image_name if image_name != image_item["name"] else None,
+        media_name if media_name != media_item["name"] else None,
     )
 
     return {
         "target_folder": f"{target_top}/{ONEDRIVE_STORIES_FOLDER_NAME}",
-        "image_name": image_name,
+        "media_name": media_name,
     }
 
 
@@ -301,10 +306,11 @@ def match_story_assets(items):
             continue
 
         name = item.get("name", "")
-        if is_supported_image_file(name):
+        if is_supported_media_file(name):
             matched.append({
                 "base_name": os.path.splitext(name)[0],
-                "image": item,
+                "media": item,
+                "kind": get_media_kind(name),
             })
 
     matched.sort(key=lambda x: x["base_name"])
@@ -435,6 +441,71 @@ def create_story_media_container(image_url, caption):
     return resp.json()
 
 
+def create_story_video_media_container(video_url):
+    url = f"{GRAPH_BASE}/{IG_USER_ID}/media"
+    payload = {
+        "media_type": "STORIES",
+        "video_url": video_url,
+        "access_token": PAGE_ACCESS_TOKEN,
+    }
+    resp = post_with_retry(url, payload, timeout=60, label="create_story_video_media_container")
+    return resp.json()
+
+
+def get_container_status(creation_id):
+    url = f"{GRAPH_BASE}/{creation_id}"
+    params = {
+        "fields": "status_code,status",
+        "access_token": PAGE_ACCESS_TOKEN,
+    }
+
+    retry_delays = [5, 10]
+    last_error = None
+
+    for attempt in range(1, 4):
+        try:
+            resp = requests.get(url, params=params, timeout=30)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as e:
+            last_error = e
+            if attempt < 3:
+                delay = retry_delays[attempt - 1]
+                print(f"WARNING: get_container_status attempt {attempt} failed: {e}")
+                print(f"Retrying in {delay} second(s)...")
+                time.sleep(delay)
+            else:
+                print(f"FAIL: get_container_status attempt {attempt} failed: {e}")
+
+    raise last_error
+
+
+def wait_for_container_ready(creation_id):
+    for attempt in range(1, VIDEO_POLL_MAX_ATTEMPTS + 1):
+        status = get_container_status(creation_id)
+        status_code = status.get("status_code")
+
+        if status_code == "FINISHED":
+            print(f"Container {creation_id} is ready to publish.")
+            return
+
+        if status_code == "ERROR":
+            raise RuntimeError(
+                f"Media container processing failed for {creation_id}: {status}"
+            )
+
+        print(
+            f"Container {creation_id} status: {status_code} "
+            f"(attempt {attempt}/{VIDEO_POLL_MAX_ATTEMPTS}). "
+            f"Waiting {VIDEO_POLL_INTERVAL}s..."
+        )
+        time.sleep(VIDEO_POLL_INTERVAL)
+
+    raise RuntimeError(
+        f"Timed out waiting for media container {creation_id} to finish processing."
+    )
+
+
 def publish_media_container(creation_id):
     url = f"{GRAPH_BASE}/{IG_USER_ID}/media_publish"
     payload = {
@@ -445,11 +516,15 @@ def publish_media_container(creation_id):
     return resp.json()
 
 
-def publish_instagram_story(image_url, caption):
-    container = create_story_media_container(image_url, caption)
-    creation_id = container["id"]
-
-    time.sleep(5)
+def publish_instagram_story(media_url, caption, media_kind):
+    if media_kind == "video":
+        container = create_story_video_media_container(media_url)
+        creation_id = container["id"]
+        wait_for_container_ready(creation_id)
+    else:
+        container = create_story_media_container(media_url, caption)
+        creation_id = container["id"]
+        time.sleep(5)
 
     published = publish_media_container(creation_id)
     return {
@@ -485,11 +560,12 @@ def main():
             sys.exit(0)
 
         selected_story = matched[0]
+        media_kind = selected_story["kind"]
         print(f"Selected story: {selected_story['base_name']}")
-        print(f"Image file: {selected_story['image']['name']}\n")
+        print(f"Media file: {selected_story['media']['name']} (kind: {media_kind})\n")
 
-        print("Step 4: Generating brief from image filename...")
-        brief_text = filename_to_brief(selected_story["image"]["name"])
+        print("Step 4: Generating brief from media filename...")
+        brief_text = filename_to_brief(selected_story["media"]["name"])
 
         if not brief_text:
             raise Exception("Brief text is empty.")
@@ -498,26 +574,26 @@ def main():
         print(brief_text)
         print()
 
-        print("Step 5: Downloading image file for local verification...")
-        image_bytes = download_file(token, selected_story["image"]["id"])
+        print("Step 5: Downloading media file for local verification...")
+        media_bytes = download_file(token, selected_story["media"]["id"])
         os.makedirs("temp", exist_ok=True)
-        image_path = os.path.join("temp", selected_story["image"]["name"])
+        media_path = os.path.join("temp", selected_story["media"]["name"])
 
-        with open(image_path, "wb") as f:
-            f.write(image_bytes)
+        with open(media_path, "wb") as f:
+            f.write(media_bytes)
 
-        print(f"Image saved to: {image_path}")
-        print(f"Image size: {len(image_bytes)} bytes\n")
+        print(f"Media saved to: {media_path}")
+        print(f"Media size: {len(media_bytes)} bytes\n")
 
-        print("Step 6: Uploading image to WordPress Media Library...")
-        media_result = upload_media(Path(image_path))
-        image_url = media_result.get("source_url")
+        print("Step 6: Uploading media to WordPress Media Library...")
+        media_result = upload_media(Path(media_path))
+        media_url = media_result.get("source_url")
 
-        if not image_url:
+        if not media_url:
             raise RuntimeError("WordPress media upload did not return source_url.")
 
         print("WordPress source_url:")
-        print(image_url)
+        print(media_url)
         print()
 
         print("Step 7: Generating story caption with OpenAI...")
@@ -533,7 +609,7 @@ def main():
             sys.exit(0)
 
         print("Step 8: Publishing to Instagram Story...")
-        publish_result = publish_instagram_story(image_url, caption)
+        publish_result = publish_instagram_story(media_url, caption, media_kind)
         print("Instagram Story publish completed.\n")
 
         print("Publish result:")
@@ -545,7 +621,7 @@ def main():
         archive_result = archive_story_assets(token, selected_story, success=True)
         print("Archive completed.")
         print(f"Moved to: {archive_result['target_folder']}")
-        print(f"Image: {archive_result['image_name']}")
+        print(f"Media: {archive_result['media_name']}")
         print()
 
         print("Story MVP completed successfully.")
@@ -561,26 +637,26 @@ def main():
                 archive_result = archive_story_assets(token, selected_story, success=False)
                 print("Failed asset archive completed.")
                 print(f"Moved to: {archive_result['target_folder']}")
-                print(f"Image: {archive_result['image_name']}")
+                print(f"Media: {archive_result['media_name']}")
                 archive_status = (
                     "Failed asset archive completed. "
                     f"Moved to {archive_result['target_folder']}. "
-                    f"Image: {archive_result['image_name']}."
+                    f"Media: {archive_result['media_name']}."
                 )
             except Exception as archive_error:
                 print("Failed to archive failed items:", str(archive_error))
                 archive_status = f"Failed to archive failed item: {archive_error}"
 
-        failed_image_name = (
-            selected_story["image"]["name"]
-            if selected_story and selected_story.get("image")
+        failed_media_name = (
+            selected_story["media"]["name"]
+            if selected_story and selected_story.get("media")
             else "not available"
         )
         send_alert_safely(
             "Reborn IG Auto Publisher Failed: story",
             "\n".join([
                 "Instagram Story publishing failed.",
-                f"Failed image: {failed_image_name}",
+                f"Failed media: {failed_media_name}",
                 f"Error: {e}",
                 f"Archive status: {archive_status}",
                 "",
