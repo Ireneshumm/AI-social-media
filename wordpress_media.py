@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from pathlib import Path
 
 import requests
@@ -31,8 +32,12 @@ CONTENT_TYPES = {
 }
 
 # Images upload quickly; videos are much larger and need a longer window.
-IMAGE_UPLOAD_TIMEOUT = 60
-VIDEO_UPLOAD_TIMEOUT = 300
+# The tuple is (connect_timeout, read_timeout): the connect phase should fail
+# fast so a transient network blip is retried instead of hanging.
+CONNECT_TIMEOUT = 15
+IMAGE_READ_TIMEOUT = 60
+VIDEO_READ_TIMEOUT = 300
+UPLOAD_RETRY_DELAYS = [5, 15]
 
 
 # =========================
@@ -75,36 +80,55 @@ def upload_media(media_path):
     content_type = get_content_type(media_path)
     filename = media_path.name
 
-    timeout = (
-        VIDEO_UPLOAD_TIMEOUT
+    read_timeout = (
+        VIDEO_READ_TIMEOUT
         if content_type.startswith("video/")
-        else IMAGE_UPLOAD_TIMEOUT
+        else IMAGE_READ_TIMEOUT
     )
+    timeout = (CONNECT_TIMEOUT, read_timeout)
 
     headers = {
         "Content-Type": content_type,
         "Content-Disposition": f'attachment; filename="{filename}"',
     }
 
-    with media_path.open("rb") as f:
-        resp = requests.post(
-            url,
-            headers=headers,
-            data=f,
-            auth=(WP_USERNAME, WP_APP_PASSWORD),
-            timeout=timeout,
-        )
+    last_error = None
 
-    if not resp.ok:
-        print(f"HTTP status code: {resp.status_code}")
-        print("WordPress error response:")
-        print(resp.text)
-        resp.raise_for_status()
+    for attempt in range(1, 4):
+        try:
+            with media_path.open("rb") as f:
+                resp = requests.post(
+                    url,
+                    headers=headers,
+                    data=f,
+                    auth=(WP_USERNAME, WP_APP_PASSWORD),
+                    timeout=timeout,
+                )
 
-    result = resp.json()
-    print(f"uploaded media id: {result.get('id')}")
-    print(f"source_url: {result.get('source_url')}")
-    return result
+            if not resp.ok:
+                print(f"HTTP status code: {resp.status_code}")
+                print("WordPress error response:")
+                print(resp.text)
+                resp.raise_for_status()
+
+            result = resp.json()
+            print(f"uploaded media id: {result.get('id')}")
+            print(f"source_url: {result.get('source_url')}")
+            return result
+        except requests.HTTPError:
+            # The server responded with an error status; retrying won't help.
+            raise
+        except requests.RequestException as e:
+            last_error = e
+            if attempt < 3:
+                delay = UPLOAD_RETRY_DELAYS[attempt - 1]
+                print(f"WARNING: WordPress upload attempt {attempt} failed: {e}")
+                print(f"Retrying in {delay} second(s)...")
+                time.sleep(delay)
+            else:
+                print(f"FAIL: WordPress upload attempt {attempt} failed: {e}")
+
+    raise last_error
 
 
 # =========================
