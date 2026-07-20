@@ -18,8 +18,11 @@ GRAPH_BASE = f"https://graph.facebook.com/{GRAPH_VERSION}"
 # Page access token via GET /me.
 FB_PAGE_ID = os.getenv("FB_PAGE_ID")
 
-# Facebook cross-posting can be turned off without a code change.
-FB_PUBLISH_ENABLED = os.getenv("FB_PUBLISH_ENABLED", "true").lower() == "true"
+# Facebook cross-posting is on by default; only an explicit off value disables
+# it. An unset workflow secret arrives as an empty string (not "unset"), so an
+# empty value must still count as enabled.
+_FB_FLAG = os.getenv("FB_PUBLISH_ENABLED", "true").strip().lower()
+FB_PUBLISH_ENABLED = _FB_FLAG not in ("false", "0", "no", "off")
 
 VIDEO_UPLOAD_TIMEOUT = int(os.getenv("FB_VIDEO_UPLOAD_TIMEOUT", "300"))
 
