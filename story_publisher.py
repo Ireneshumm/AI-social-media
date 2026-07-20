@@ -402,6 +402,23 @@ def print_error_response(error):
         print(body)
 
 
+# Graph errors where Instagram simply failed to fetch the media from the URL
+# are effectively transient (its fetcher hiccups), so they are worth retrying.
+TRANSIENT_GRAPH_SUBCODES = {2207003, 2207020, 2207052}
+
+
+def is_transient_graph_error(resp):
+    if resp is None:
+        return False
+    try:
+        error = resp.json().get("error", {})
+    except ValueError:
+        return False
+    if error.get("is_transient"):
+        return True
+    return error.get("error_subcode") in TRANSIENT_GRAPH_SUBCODES
+
+
 def post_with_retry(url, payload, timeout=60, label="Instagram Graph request"):
     retry_delays = [5, 10]
     last_error = None
@@ -414,7 +431,9 @@ def post_with_retry(url, payload, timeout=60, label="Instagram Graph request"):
         except requests.HTTPError as e:
             last_error = e
             status_code = e.response.status_code if e.response is not None else None
-            should_retry = status_code is not None and 500 <= status_code < 600
+            should_retry = (
+                status_code is not None and 500 <= status_code < 600
+            ) or is_transient_graph_error(e.response)
 
             if not should_retry:
                 print(f"FAIL: {label} failed with non-retryable HTTP error on attempt {attempt}: {e}")
