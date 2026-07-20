@@ -11,6 +11,7 @@ from asset_helpers import is_supported_media_file, get_media_kind, filename_to_b
 from wordpress_media import upload_media
 from alert_email import send_alert_safely
 from facebook_publish import publish_facebook_post, FB_PUBLISH_ENABLED
+from video_transcode import ensure_h264
 
 load_dotenv()
 
@@ -610,6 +611,11 @@ def main():
 
         print(f"Media saved to: {media_path}")
         print(f"Media size: {len(media_bytes)} bytes\n")
+
+        if media_kind == "video":
+            print("Step 5b: Ensuring video is H.264 (transcode if needed)...")
+            media_path = ensure_h264(media_path)
+            print()
 
         print("Step 6: Uploading media to WordPress Media Library...")
         media_result = upload_media(Path(media_path))
