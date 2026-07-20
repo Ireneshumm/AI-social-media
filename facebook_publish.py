@@ -48,7 +48,7 @@ def print_error_response(error):
         print(body)
 
 
-def request_with_retry(method, url, label, data=None, params=None, headers=None, timeout=60):
+def request_with_retry(method, url, label, data=None, params=None, headers=None, files=None, timeout=60):
     last_error = None
 
     for attempt in range(1, 4):
@@ -59,6 +59,7 @@ def request_with_retry(method, url, label, data=None, params=None, headers=None,
                 data=data,
                 params=params,
                 headers=headers,
+                files=files,
                 timeout=timeout,
             )
             resp.raise_for_status()
@@ -141,22 +142,28 @@ def publish_photo_post(page_id, image_url, caption):
     return resp.json()
 
 
-def publish_video_post(page_id, video_url, caption):
+def publish_video_post(page_id, video_path, caption):
+    # Upload the raw bytes directly instead of handing Facebook a file_url to
+    # fetch: the WordPress host blocks Facebook's video fetcher (HTTP 418).
+    with open(video_path, "rb") as f:
+        video_bytes = f.read()
+
     url = f"{GRAPH_BASE}/{page_id}/videos"
-    payload = {
-        "file_url": video_url,
-        "description": caption,
-        "access_token": PAGE_ACCESS_TOKEN,
-    }
-    resp = request_with_retry("POST", url, "facebook video post", data=payload, timeout=120)
+    files = {"source": (os.path.basename(video_path), video_bytes, "video/mp4")}
+    data = {"description": caption, "access_token": PAGE_ACCESS_TOKEN}
+    resp = request_with_retry(
+        "POST", url, "facebook video post", data=data, files=files, timeout=VIDEO_UPLOAD_TIMEOUT
+    )
     return resp.json()
 
 
-def publish_facebook_post(media_url, caption, media_kind, page_id=None):
+def publish_facebook_post(media_url, caption, media_kind, media_path=None, page_id=None):
     page_id = page_id or get_page_id()
 
     if media_kind == "video":
-        return publish_video_post(page_id, media_url, caption)
+        if not media_path:
+            raise RuntimeError("media_path is required to publish a Facebook video post.")
+        return publish_video_post(page_id, media_path, caption)
     return publish_photo_post(page_id, media_url, caption)
 
 
@@ -191,7 +198,7 @@ def publish_photo_story(page_id, image_url):
     return resp.json()
 
 
-def publish_video_story(page_id, video_url):
+def publish_video_story(page_id, video_path):
     stories_url = f"{GRAPH_BASE}/{page_id}/video_stories"
 
     # Phase 1: start an upload session.
@@ -206,15 +213,20 @@ def publish_video_story(page_id, video_url):
     video_id = start_data["video_id"]
     upload_url = start_data["upload_url"]
 
-    # Phase 2: hand Facebook the hosted video url to fetch.
+    # Phase 2: upload the raw bytes directly. Handing Facebook a file_url to
+    # fetch fails because the WordPress host blocks its video fetcher (418).
+    with open(video_path, "rb") as f:
+        video_bytes = f.read()
     request_with_retry(
         "POST",
         upload_url,
         "facebook video story upload",
         headers={
             "Authorization": f"OAuth {PAGE_ACCESS_TOKEN}",
-            "file_url": video_url,
+            "offset": "0",
+            "file_size": str(len(video_bytes)),
         },
+        data=video_bytes,
         timeout=VIDEO_UPLOAD_TIMEOUT,
     )
 
@@ -233,9 +245,11 @@ def publish_video_story(page_id, video_url):
     return finish.json()
 
 
-def publish_facebook_story(media_url, media_kind, page_id=None):
+def publish_facebook_story(media_url, media_kind, media_path=None, page_id=None):
     page_id = page_id or get_page_id()
 
     if media_kind == "video":
-        return publish_video_story(page_id, media_url)
+        if not media_path:
+            raise RuntimeError("media_path is required to publish a Facebook video story.")
+        return publish_video_story(page_id, media_path)
     return publish_photo_story(page_id, media_url)

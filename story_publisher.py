@@ -634,7 +634,7 @@ def main():
         if FB_PUBLISH_ENABLED:
             print("Step 8b: Cross-posting to Facebook Story...")
             try:
-                fb_result = publish_facebook_story(media_url, media_kind)
+                fb_result = publish_facebook_story(media_url, media_kind, media_path=media_path)
                 print(f"Facebook story published: {fb_result}\n")
             except Exception as fb_error:
                 # Instagram already succeeded; a Facebook failure must not fail
