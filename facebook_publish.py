@@ -11,7 +11,11 @@ load_dotenv()
 # =========================
 # Config
 # =========================
-PAGE_ACCESS_TOKEN = os.getenv("PAGE_ACCESS_TOKEN")
+# Strip surrounding whitespace/newlines: a token pasted into a secret often
+# carries a trailing "\n", which is harmless in form fields but illegal in an
+# HTTP header (breaks the video-story resumable upload).
+_RAW_PAGE_ACCESS_TOKEN = os.getenv("PAGE_ACCESS_TOKEN")
+PAGE_ACCESS_TOKEN = _RAW_PAGE_ACCESS_TOKEN.strip() if _RAW_PAGE_ACCESS_TOKEN else _RAW_PAGE_ACCESS_TOKEN
 GRAPH_VERSION = os.getenv("META_GRAPH_API_VERSION", "v23.0")
 GRAPH_BASE = f"https://graph.facebook.com/{GRAPH_VERSION}"
 
