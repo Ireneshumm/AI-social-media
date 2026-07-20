@@ -1,3 +1,4 @@
+import json
 import os
 import time
 
@@ -109,13 +110,30 @@ def get_page_id():
 # Feed post (image / video)
 # =========================
 def publish_photo_post(page_id, image_url, caption):
-    url = f"{GRAPH_BASE}/{page_id}/photos"
+    # Two-step: upload the photo unpublished to get a photo id, then attach it
+    # to a feed post. A single published /photos?url= call validates the image
+    # more strictly and can reject it with error 2069019, so we avoid it.
+    photos_url = f"{GRAPH_BASE}/{page_id}/photos"
+    upload = request_with_retry(
+        "POST",
+        photos_url,
+        "facebook feed photo upload",
+        data={
+            "url": image_url,
+            "published": "false",
+            "access_token": PAGE_ACCESS_TOKEN,
+        },
+        timeout=60,
+    )
+    photo_id = upload.json()["id"]
+
+    feed_url = f"{GRAPH_BASE}/{page_id}/feed"
     payload = {
-        "url": image_url,
         "message": caption,
+        "attached_media[0]": json.dumps({"media_fbid": photo_id}),
         "access_token": PAGE_ACCESS_TOKEN,
     }
-    resp = request_with_retry("POST", url, "facebook photo post", data=payload, timeout=60)
+    resp = request_with_retry("POST", feed_url, "facebook feed photo post", data=payload, timeout=60)
     return resp.json()
 
 
