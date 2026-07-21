@@ -112,9 +112,42 @@ def get_page_id():
 
 
 # =========================
+# Page credentials
+# =========================
+def get_page_credentials():
+    """Return (page_id, page_token) for publishing.
+
+    Works whether PAGE_ACCESS_TOKEN is a Page token or a User token: /me/accounts
+    lists the Pages the user manages together with a real Page access token, so
+    Page operations use the right id and token either way. Falls back to the
+    configured token if /me/accounts is unavailable (already a page token)."""
+    try:
+        resp = request_with_retry(
+            "GET",
+            f"{GRAPH_BASE}/me/accounts",
+            "facebook get_page_credentials",
+            params={"fields": "id,name,access_token", "access_token": PAGE_ACCESS_TOKEN},
+            timeout=30,
+        )
+        pages = resp.json().get("data", [])
+    except Exception as e:
+        print(f"WARNING: /me/accounts unavailable ({e}); using configured token.")
+        pages = []
+
+    if pages:
+        page = None
+        if FB_PAGE_ID:
+            page = next((p for p in pages if p.get("id") == FB_PAGE_ID), None)
+        page = page or pages[0]
+        return page["id"], page.get("access_token", PAGE_ACCESS_TOKEN)
+
+    return (FB_PAGE_ID or get_page_id()), PAGE_ACCESS_TOKEN
+
+
+# =========================
 # Feed post (image / video)
 # =========================
-def publish_photo_post(page_id, image_url, caption):
+def publish_photo_post(page_id, token, image_url, caption):
     # Two-step: upload the photo unpublished to get a photo id, then attach it
     # to a feed post. A single published /photos?url= call validates the image
     # more strictly and can reject it with error 2069019, so we avoid it.
@@ -123,11 +156,7 @@ def publish_photo_post(page_id, image_url, caption):
         "POST",
         photos_url,
         "facebook feed photo upload",
-        data={
-            "url": image_url,
-            "published": "false",
-            "access_token": PAGE_ACCESS_TOKEN,
-        },
+        data={"url": image_url, "published": "false", "access_token": token},
         timeout=60,
     )
     photo_id = upload.json()["id"]
@@ -136,13 +165,13 @@ def publish_photo_post(page_id, image_url, caption):
     payload = {
         "message": caption,
         "attached_media[0]": json.dumps({"media_fbid": photo_id}),
-        "access_token": PAGE_ACCESS_TOKEN,
+        "access_token": token,
     }
     resp = request_with_retry("POST", feed_url, "facebook feed photo post", data=payload, timeout=60)
     return resp.json()
 
 
-def publish_video_post(page_id, video_path, caption):
+def publish_video_post(page_id, token, video_path, caption):
     # Upload the raw bytes directly instead of handing Facebook a file_url to
     # fetch: the WordPress host blocks Facebook's video fetcher (HTTP 418).
     with open(video_path, "rb") as f:
@@ -150,7 +179,7 @@ def publish_video_post(page_id, video_path, caption):
 
     url = f"{GRAPH_BASE}/{page_id}/videos"
     files = {"source": (os.path.basename(video_path), video_bytes, "video/mp4")}
-    data = {"description": caption, "access_token": PAGE_ACCESS_TOKEN}
+    data = {"description": caption, "access_token": token}
     resp = request_with_retry(
         "POST", url, "facebook video post", data=data, files=files, timeout=VIDEO_UPLOAD_TIMEOUT
     )
@@ -158,30 +187,27 @@ def publish_video_post(page_id, video_path, caption):
 
 
 def publish_facebook_post(media_url, caption, media_kind, media_path=None, page_id=None):
-    page_id = page_id or get_page_id()
+    resolved_id, token = get_page_credentials()
+    page_id = page_id or resolved_id
 
     if media_kind == "video":
         if not media_path:
             raise RuntimeError("media_path is required to publish a Facebook video post.")
-        return publish_video_post(page_id, media_path, caption)
-    return publish_photo_post(page_id, media_url, caption)
+        return publish_video_post(page_id, token, media_path, caption)
+    return publish_photo_post(page_id, token, media_url, caption)
 
 
 # =========================
 # Story (image / video)
 # =========================
-def publish_photo_story(page_id, image_url):
+def publish_photo_story(page_id, token, image_url):
     # Step 1: upload the photo unpublished to get a photo id.
     photos_url = f"{GRAPH_BASE}/{page_id}/photos"
     upload = request_with_retry(
         "POST",
         photos_url,
         "facebook story photo upload",
-        data={
-            "url": image_url,
-            "published": "false",
-            "access_token": PAGE_ACCESS_TOKEN,
-        },
+        data={"url": image_url, "published": "false", "access_token": token},
         timeout=60,
     )
     photo_id = upload.json()["id"]
@@ -192,13 +218,13 @@ def publish_photo_story(page_id, image_url):
         "POST",
         story_url,
         "facebook photo story",
-        data={"photo_id": photo_id, "access_token": PAGE_ACCESS_TOKEN},
+        data={"photo_id": photo_id, "access_token": token},
         timeout=60,
     )
     return resp.json()
 
 
-def publish_video_story(page_id, video_path):
+def publish_video_story(page_id, token, video_path):
     stories_url = f"{GRAPH_BASE}/{page_id}/video_stories"
 
     # Phase 1: start an upload session.
@@ -206,7 +232,7 @@ def publish_video_story(page_id, video_path):
         "POST",
         stories_url,
         "facebook video story start",
-        data={"upload_phase": "start", "access_token": PAGE_ACCESS_TOKEN},
+        data={"upload_phase": "start", "access_token": token},
         timeout=60,
     )
     start_data = start.json()
@@ -222,7 +248,7 @@ def publish_video_story(page_id, video_path):
         upload_url,
         "facebook video story upload",
         headers={
-            "Authorization": f"OAuth {PAGE_ACCESS_TOKEN}",
+            "Authorization": f"OAuth {token}",
             "offset": "0",
             "file_size": str(len(video_bytes)),
         },
@@ -235,21 +261,18 @@ def publish_video_story(page_id, video_path):
         "POST",
         stories_url,
         "facebook video story finish",
-        data={
-            "upload_phase": "finish",
-            "video_id": video_id,
-            "access_token": PAGE_ACCESS_TOKEN,
-        },
+        data={"upload_phase": "finish", "video_id": video_id, "access_token": token},
         timeout=60,
     )
     return finish.json()
 
 
 def publish_facebook_story(media_url, media_kind, media_path=None, page_id=None):
-    page_id = page_id or get_page_id()
+    resolved_id, token = get_page_credentials()
+    page_id = page_id or resolved_id
 
     if media_kind == "video":
         if not media_path:
             raise RuntimeError("media_path is required to publish a Facebook video story.")
-        return publish_video_story(page_id, media_path)
-    return publish_photo_story(page_id, media_url)
+        return publish_video_story(page_id, token, media_path)
+    return publish_photo_story(page_id, token, media_url)
