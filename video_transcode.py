@@ -91,10 +91,13 @@ def get_video_info(path):
 def ensure_h264(input_path):
     """Return a path to an Instagram/Facebook-friendly H.264/AAC MP4.
 
-    Transcodes when the video is not H.264, or is wider than MAX_WIDTH, or has
-    a frame rate above MAX_FPS (e.g. 4K / 60fps / slow-motion iPhone clips).
-    Already-compliant videos and any environment without ffmpeg fall through
-    with the original file, so publishing is never blocked by transcoding.
+    Always re-encodes the video to a clean, uniform 1080x1920 H.264/AAC MP4
+    (blurred-background padding for non-9:16 sources). Even videos that look
+    compliant on paper can be rejected by Instagram (error 2207077) for subtle
+    reasons - low resolution, odd audio codec, unusual pixel format/profile -
+    so a full normalising pass is the reliable option. Falls back to the
+    original file if ffmpeg is unavailable or the transcode fails, so
+    publishing is never blocked.
     """
     if not has_tool("ffmpeg"):
         print("WARNING: ffmpeg not found; skipping video transcode.")
@@ -111,31 +114,14 @@ def ensure_h264(input_path):
             "at least 3 seconds and will reject it (error 2207077)."
         )
 
-    aspect = (width / height) if (width and height) else None
-    aspect_is_916 = aspect is not None and abs(aspect - TARGET_ASPECT) <= ASPECT_TOLERANCE
-
-    needs_transcode = (
-        codec != "h264"
-        or (width is not None and width > MAX_WIDTH)
-        or (height is not None and height > TARGET_HEIGHT)
-        or (fps is not None and fps > MAX_FPS + 1)
-        or not aspect_is_916
-    )
-    if not needs_transcode:
-        print("Video already meets requirements; no transcode needed.")
-        return input_path
-
     base, _ = os.path.splitext(input_path)
     output_path = f"{base}_h264.mp4"
 
-    if aspect_is_916:
-        # Already 9:16, just cap size/fps and normalise codec. Framing is kept.
-        print(f"Transcoding to H.264 (<= {MAX_WIDTH}px wide, <= {MAX_FPS}fps)...")
-        video_filter = f"scale='min({MAX_WIDTH},iw)':-2"
-    else:
-        # Not 9:16: fit onto a 1080x1920 blurred-background canvas.
-        print(f"Transcoding to H.264 and padding to {TARGET_WIDTH}x{TARGET_HEIGHT} (blurred background)...")
-        video_filter = blur_pad_filter()
+    # Blurred-background pad to a uniform 1080x1920 canvas. For an already-9:16
+    # source the foreground fills the frame and the blur is invisible; for
+    # other shapes it fills the sides/top-and-bottom without cropping.
+    print(f"Normalising video to {TARGET_WIDTH}x{TARGET_HEIGHT} H.264/AAC (<= {MAX_FPS}fps)...")
+    video_filter = blur_pad_filter()
 
     cmd = [
         "ffmpeg", "-y",
