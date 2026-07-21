@@ -25,7 +25,9 @@ ONEDRIVE_STORIES_FOLDER_NAME = os.getenv("ONEDRIVE_STORIES_FOLDER_NAME", "storie
 ONEDRIVE_POSTED_FOLDER_NAME = os.getenv("ONEDRIVE_POSTED_FOLDER_NAME", "posted")
 ONEDRIVE_USER_EMAIL = os.getenv("ONEDRIVE_USER_EMAIL", "info@rebornaesthetics.com.au")
 
-CLEANUP_DAYS = int(os.getenv("CLEANUP_RETENTION_DAYS", "30"))
+# An unset workflow secret arrives as an empty string, not "unset", so fall
+# back to the default when the value is blank.
+CLEANUP_DAYS = int(os.getenv("CLEANUP_RETENTION_DAYS") or "30")
 
 AUTHORITY = f"https://login.microsoftonline.com/{MS_TENANT_ID}"
 SCOPES = ["https://graph.microsoft.com/.default"]
