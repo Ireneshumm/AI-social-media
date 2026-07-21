@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from pathlib import Path
 
 import requests
@@ -26,7 +27,17 @@ CONTENT_TYPES = {
     ".jpeg": "image/jpeg",
     ".png": "image/png",
     ".webp": "image/webp",
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
 }
+
+# Images upload quickly; videos are much larger and need a longer window.
+# The tuple is (connect_timeout, read_timeout): the connect phase should fail
+# fast so a transient network blip is retried instead of hanging.
+CONNECT_TIMEOUT = 15
+IMAGE_READ_TIMEOUT = 60
+VIDEO_READ_TIMEOUT = 300
+UPLOAD_RETRY_DELAYS = [5, 15]
 
 
 # =========================
@@ -40,59 +51,84 @@ def validate_env():
         )
 
 
-def get_content_type(image_path):
-    ext = image_path.suffix.lower()
+def get_content_type(media_path):
+    ext = media_path.suffix.lower()
     content_type = CONTENT_TYPES.get(ext)
 
     if not content_type:
-        raise RuntimeError(f"Unsupported image extension: {ext}")
+        raise RuntimeError(f"Unsupported media extension: {ext}")
 
     return content_type
 
 
-def validate_image_path(image_path):
-    if not image_path.exists():
-        raise RuntimeError(f"Image file not found: {image_path}")
+def validate_media_path(media_path):
+    if not media_path.exists():
+        raise RuntimeError(f"Media file not found: {media_path}")
 
-    if not image_path.is_file():
-        raise RuntimeError(f"Image path is not a file: {image_path}")
+    if not media_path.is_file():
+        raise RuntimeError(f"Media path is not a file: {media_path}")
 
 
 # =========================
 # WordPress upload
 # =========================
-def upload_media(image_path):
+def upload_media(media_path):
     validate_env()
-    validate_image_path(image_path)
+    validate_media_path(media_path)
 
     url = f"{WP_BASE_URL.rstrip('/')}/wp-json/wp/v2/media"
-    content_type = get_content_type(image_path)
-    filename = image_path.name
+    content_type = get_content_type(media_path)
+    filename = media_path.name
+
+    read_timeout = (
+        VIDEO_READ_TIMEOUT
+        if content_type.startswith("video/")
+        else IMAGE_READ_TIMEOUT
+    )
+    timeout = (CONNECT_TIMEOUT, read_timeout)
 
     headers = {
         "Content-Type": content_type,
         "Content-Disposition": f'attachment; filename="{filename}"',
     }
 
-    with image_path.open("rb") as f:
-        resp = requests.post(
-            url,
-            headers=headers,
-            data=f,
-            auth=(WP_USERNAME, WP_APP_PASSWORD),
-            timeout=60,
-        )
+    last_error = None
 
-    if not resp.ok:
-        print(f"HTTP status code: {resp.status_code}")
-        print("WordPress error response:")
-        print(resp.text)
-        resp.raise_for_status()
+    for attempt in range(1, 4):
+        try:
+            with media_path.open("rb") as f:
+                resp = requests.post(
+                    url,
+                    headers=headers,
+                    data=f,
+                    auth=(WP_USERNAME, WP_APP_PASSWORD),
+                    timeout=timeout,
+                )
 
-    result = resp.json()
-    print(f"uploaded media id: {result.get('id')}")
-    print(f"source_url: {result.get('source_url')}")
-    return result
+            if not resp.ok:
+                print(f"HTTP status code: {resp.status_code}")
+                print("WordPress error response:")
+                print(resp.text)
+                resp.raise_for_status()
+
+            result = resp.json()
+            print(f"uploaded media id: {result.get('id')}")
+            print(f"source_url: {result.get('source_url')}")
+            return result
+        except requests.HTTPError:
+            # The server responded with an error status; retrying won't help.
+            raise
+        except requests.RequestException as e:
+            last_error = e
+            if attempt < 3:
+                delay = UPLOAD_RETRY_DELAYS[attempt - 1]
+                print(f"WARNING: WordPress upload attempt {attempt} failed: {e}")
+                print(f"Retrying in {delay} second(s)...")
+                time.sleep(delay)
+            else:
+                print(f"FAIL: WordPress upload attempt {attempt} failed: {e}")
+
+    raise last_error
 
 
 # =========================
@@ -104,8 +140,8 @@ def main():
         sys.exit(1)
 
     try:
-        image_path = Path(sys.argv[1])
-        upload_media(image_path)
+        media_path = Path(sys.argv[1])
+        upload_media(media_path)
         sys.exit(0)
 
     except Exception as e:

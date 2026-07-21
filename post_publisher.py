@@ -7,9 +7,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 from msal import ConfidentialClientApplication
 from openai import OpenAI
-from asset_helpers import is_supported_image_file, filename_to_brief
+from asset_helpers import is_supported_media_file, get_media_kind, filename_to_brief
 from wordpress_media import upload_media
 from alert_email import send_alert_safely
+from facebook_publish import publish_facebook_post, FB_PUBLISH_ENABLED
+from video_transcode import ensure_h264
+from media_analysis import get_caption_image_uris
 
 load_dotenv()
 
@@ -33,6 +36,11 @@ IG_USER_ID = os.getenv("IG_USER_ID")
 PAGE_ACCESS_TOKEN = os.getenv("PAGE_ACCESS_TOKEN")
 GRAPH_VERSION = os.getenv("META_GRAPH_API_VERSION", "v23.0")
 DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
+
+# Video containers are processed asynchronously by Instagram, so we poll the
+# container status before publishing. Defaults give up to ~5 minutes.
+VIDEO_POLL_MAX_ATTEMPTS = int(os.getenv("VIDEO_POLL_MAX_ATTEMPTS", "30"))
+VIDEO_POLL_INTERVAL = int(os.getenv("VIDEO_POLL_INTERVAL", "10"))
 
 AUTHORITY = f"https://login.microsoftonline.com/{MS_TENANT_ID}"
 SCOPES = ["https://graph.microsoft.com/.default"]
@@ -268,26 +276,26 @@ def archive_post_assets(token, selected_post, success=True):
     target_top = ONEDRIVE_POSTED_FOLDER_NAME if success else ONEDRIVE_FAILED_FOLDER_NAME
     target_subfolder = get_subfolder_by_path(token, target_top, ONEDRIVE_POSTS_FOLDER_NAME)
 
-    image_item = selected_post["image"]
+    media_item = selected_post["media"]
     target_items = get_folder_children(token, target_subfolder["id"])
     archive_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    image_name = get_conflict_safe_name(
+    media_name = get_conflict_safe_name(
         target_items,
-        image_item["name"],
+        media_item["name"],
         archive_timestamp,
     )
 
     move_item_to_folder(
         token,
-        image_item["id"],
+        media_item["id"],
         target_subfolder["id"],
-        image_name if image_name != image_item["name"] else None,
+        media_name if media_name != media_item["name"] else None,
     )
 
     return {
         "target_folder": f"{target_top}/{ONEDRIVE_POSTS_FOLDER_NAME}",
-        "image_name": image_name,
+        "media_name": media_name,
     }
 
 
@@ -301,10 +309,11 @@ def match_post_assets(items):
             continue
 
         name = item.get("name", "")
-        if is_supported_image_file(name):
+        if is_supported_media_file(name):
             matched.append({
                 "base_name": os.path.splitext(name)[0],
-                "image": item,
+                "media": item,
+                "kind": get_media_kind(name),
             })
 
     matched.sort(key=lambda x: x["base_name"])
@@ -333,10 +342,31 @@ def parse_post_text(text_content):
     return image_url, brief
 
 
-def generate_caption(brief_text):
+def generate_caption(brief_text, image_uris=None):
     client = OpenAI(api_key=OPENAI_API_KEY)
 
-    prompt = f"""
+    if image_uris:
+        prompt = f"""
+You are writing an Instagram caption for Reborn Aesthetics, a premium aesthetics clinic in Brisbane.
+
+The attached image(s) are the actual post media (for a video, they are sampled frames). Look at what is shown and write the caption about that content.
+Use this filename hint only as extra context, it may name the treatment: {brief_text}
+
+Requirements:
+- Base the caption on what you actually see in the image(s)
+- Tone: premium, warm, professional
+- Length: short to medium
+- Make it suitable for an Instagram post
+- Include a soft call to action
+- Add 3 to 5 relevant hashtags
+- No medical claims and no guaranteed results
+"""
+        content = [{"type": "input_text", "text": prompt}]
+        for uri in image_uris:
+            content.append({"type": "input_image", "image_url": uri})
+        model_input = [{"role": "user", "content": content}]
+    else:
+        prompt = f"""
 You are writing an Instagram caption for Reborn Aesthetics, a premium aesthetics clinic in Brisbane.
 
 Use the following content brief:
@@ -349,6 +379,7 @@ Requirements:
 - Include a soft call to action
 - Add 3 to 5 relevant hashtags
 """
+        model_input = prompt
 
     retry_delays = [5, 10]
     last_error = None
@@ -357,7 +388,7 @@ Requirements:
         try:
             response = client.responses.create(
                 model=OPENAI_MODEL,
-                input=prompt
+                input=model_input
             )
             return response.output_text.strip()
         except Exception as e:
@@ -377,6 +408,34 @@ Requirements:
 # =========================
 # Instagram publish
 # =========================
+def print_error_response(error):
+    resp = getattr(error, "response", None)
+    if resp is None:
+        return
+
+    body = resp.text
+    if body:
+        print("Instagram Graph API error response:")
+        print(body)
+
+
+# Graph errors where Instagram simply failed to fetch the media from the URL
+# are effectively transient (its fetcher hiccups), so they are worth retrying.
+TRANSIENT_GRAPH_SUBCODES = {2207003, 2207020, 2207052}
+
+
+def is_transient_graph_error(resp):
+    if resp is None:
+        return False
+    try:
+        error = resp.json().get("error", {})
+    except ValueError:
+        return False
+    if error.get("is_transient"):
+        return True
+    return error.get("error_subcode") in TRANSIENT_GRAPH_SUBCODES
+
+
 def post_with_retry(url, payload, timeout=60, label="Instagram Graph request"):
     retry_delays = [5, 10]
     last_error = None
@@ -389,10 +448,13 @@ def post_with_retry(url, payload, timeout=60, label="Instagram Graph request"):
         except requests.HTTPError as e:
             last_error = e
             status_code = e.response.status_code if e.response is not None else None
-            should_retry = status_code is not None and 500 <= status_code < 600
+            should_retry = (
+                status_code is not None and 500 <= status_code < 600
+            ) or is_transient_graph_error(e.response)
 
             if not should_retry:
                 print(f"FAIL: {label} failed with non-retryable HTTP error on attempt {attempt}: {e}")
+                print_error_response(e)
                 raise
 
             if attempt < 3:
@@ -402,6 +464,7 @@ def post_with_retry(url, payload, timeout=60, label="Instagram Graph request"):
                 time.sleep(delay)
             else:
                 print(f"FAIL: {label} attempt {attempt} failed with HTTP {status_code}: {e}")
+                print_error_response(e)
         except requests.RequestException as e:
             last_error = e
 
@@ -427,6 +490,72 @@ def create_media_container(image_url, caption):
     return resp.json()
 
 
+def create_video_media_container(video_url, caption):
+    url = f"{GRAPH_BASE}/{IG_USER_ID}/media"
+    payload = {
+        "media_type": "REELS",
+        "video_url": video_url,
+        "caption": caption,
+        "access_token": PAGE_ACCESS_TOKEN,
+    }
+    resp = post_with_retry(url, payload, timeout=60, label="create_video_media_container")
+    return resp.json()
+
+
+def get_container_status(creation_id):
+    url = f"{GRAPH_BASE}/{creation_id}"
+    params = {
+        "fields": "status_code,status",
+        "access_token": PAGE_ACCESS_TOKEN,
+    }
+
+    retry_delays = [5, 10]
+    last_error = None
+
+    for attempt in range(1, 4):
+        try:
+            resp = requests.get(url, params=params, timeout=30)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as e:
+            last_error = e
+            if attempt < 3:
+                delay = retry_delays[attempt - 1]
+                print(f"WARNING: get_container_status attempt {attempt} failed: {e}")
+                print(f"Retrying in {delay} second(s)...")
+                time.sleep(delay)
+            else:
+                print(f"FAIL: get_container_status attempt {attempt} failed: {e}")
+
+    raise last_error
+
+
+def wait_for_container_ready(creation_id):
+    for attempt in range(1, VIDEO_POLL_MAX_ATTEMPTS + 1):
+        status = get_container_status(creation_id)
+        status_code = status.get("status_code")
+
+        if status_code == "FINISHED":
+            print(f"Container {creation_id} is ready to publish.")
+            return
+
+        if status_code == "ERROR":
+            raise RuntimeError(
+                f"Media container processing failed for {creation_id}: {status}"
+            )
+
+        print(
+            f"Container {creation_id} status: {status_code} "
+            f"(attempt {attempt}/{VIDEO_POLL_MAX_ATTEMPTS}). "
+            f"Waiting {VIDEO_POLL_INTERVAL}s..."
+        )
+        time.sleep(VIDEO_POLL_INTERVAL)
+
+    raise RuntimeError(
+        f"Timed out waiting for media container {creation_id} to finish processing."
+    )
+
+
 def publish_media_container(creation_id):
     url = f"{GRAPH_BASE}/{IG_USER_ID}/media_publish"
     payload = {
@@ -437,11 +566,15 @@ def publish_media_container(creation_id):
     return resp.json()
 
 
-def publish_instagram_post(image_url, caption):
-    container = create_media_container(image_url, caption)
-    creation_id = container["id"]
-
-    time.sleep(5)
+def publish_instagram_post(media_url, caption, media_kind):
+    if media_kind == "video":
+        container = create_video_media_container(media_url, caption)
+        creation_id = container["id"]
+        wait_for_container_ready(creation_id)
+    else:
+        container = create_media_container(media_url, caption)
+        creation_id = container["id"]
+        time.sleep(5)
 
     published = publish_media_container(creation_id)
     return {
@@ -477,11 +610,12 @@ def main():
             sys.exit(0)
 
         selected_post = matched[0]
+        media_kind = selected_post["kind"]
         print(f"Selected post: {selected_post['base_name']}")
-        print(f"Image file: {selected_post['image']['name']}\n")
+        print(f"Media file: {selected_post['media']['name']} (kind: {media_kind})\n")
 
-        print("Step 4: Generating brief from image filename...")
-        brief_text = filename_to_brief(selected_post["image"]["name"])
+        print("Step 4: Generating brief from media filename...")
+        brief_text = filename_to_brief(selected_post["media"]["name"])
 
         if not brief_text:
             raise Exception("Brief text is empty.")
@@ -490,30 +624,40 @@ def main():
         print(brief_text)
         print()
 
-        print("Step 5: Downloading image file for local verification...")
-        image_bytes = download_file(token, selected_post["image"]["id"])
+        print("Step 5: Downloading media file for local verification...")
+        media_bytes = download_file(token, selected_post["media"]["id"])
         os.makedirs("temp", exist_ok=True)
-        image_path = os.path.join("temp", selected_post["image"]["name"])
+        media_path = os.path.join("temp", selected_post["media"]["name"])
 
-        with open(image_path, "wb") as f:
-            f.write(image_bytes)
+        with open(media_path, "wb") as f:
+            f.write(media_bytes)
 
-        print(f"Image saved to: {image_path}")
-        print(f"Image size: {len(image_bytes)} bytes\n")
+        print(f"Media saved to: {media_path}")
+        print(f"Media size: {len(media_bytes)} bytes\n")
 
-        print("Step 6: Uploading image to WordPress Media Library...")
-        media_result = upload_media(Path(image_path))
-        image_url = media_result.get("source_url")
+        if media_kind == "video":
+            print("Step 5b: Ensuring video is H.264 (transcode if needed)...")
+            media_path = ensure_h264(media_path)
+            print()
 
-        if not image_url:
+        print("Step 6: Uploading media to WordPress Media Library...")
+        media_result = upload_media(Path(media_path))
+        media_url = media_result.get("source_url")
+
+        if not media_url:
             raise RuntimeError("WordPress media upload did not return source_url.")
 
         print("WordPress source_url:")
-        print(image_url)
+        print(media_url)
         print()
 
-        print("Step 7: Generating caption with OpenAI...")
-        caption = generate_caption(brief_text)
+        print("Step 7: Generating caption with OpenAI (from media content)...")
+        content_images = get_caption_image_uris(media_path, media_kind)
+        if content_images:
+            print(f"Analyzing {len(content_images)} image(s) from the media for the caption.")
+        else:
+            print("No media images available; using filename brief only.")
+        caption = generate_caption(brief_text, image_uris=content_images)
         print("Caption generated.\n")
 
         print("Generated caption:")
@@ -525,7 +669,7 @@ def main():
             sys.exit(0)
 
         print("Step 8: Publishing to Instagram...")
-        publish_result = publish_instagram_post(image_url, caption)
+        publish_result = publish_instagram_post(media_url, caption, media_kind)
         print("Instagram publish completed.\n")
 
         print("Publish result:")
@@ -533,11 +677,31 @@ def main():
         print(f"media_id   : {publish_result['media_id']}")
         print()
 
+        if FB_PUBLISH_ENABLED:
+            print("Step 8b: Cross-posting to Facebook Page...")
+            try:
+                fb_result = publish_facebook_post(media_url, caption, media_kind, media_path=media_path)
+                print(f"Facebook post published: {fb_result}\n")
+            except Exception as fb_error:
+                # Instagram already succeeded; a Facebook failure must not fail
+                # the run. Surface it via logs and a non-fatal alert instead.
+                print(f"WARNING: Facebook cross-post failed (Instagram already succeeded): {fb_error}\n")
+                send_alert_safely(
+                    "Reborn Auto Publisher: Facebook cross-post failed (post)",
+                    "\n".join([
+                        "Instagram post succeeded but the Facebook cross-post failed.",
+                        f"Media: {selected_post['media']['name']}",
+                        f"Error: {fb_error}",
+                        "",
+                        "Please check GitHub Actions logs. The Instagram post was published normally.",
+                    ]),
+                )
+
         print("Step 9: Archiving success item to posted/posts...")
         archive_result = archive_post_assets(token, selected_post, success=True)
         print("Archive completed.")
         print(f"Moved to: {archive_result['target_folder']}")
-        print(f"Image: {archive_result['image_name']}")
+        print(f"Media: {archive_result['media_name']}")
         print()
 
         print("Post MVP completed successfully.")
@@ -553,26 +717,26 @@ def main():
                 archive_result = archive_post_assets(token, selected_post, success=False)
                 print("Failed asset archive completed.")
                 print(f"Moved to: {archive_result['target_folder']}")
-                print(f"Image: {archive_result['image_name']}")
+                print(f"Media: {archive_result['media_name']}")
                 archive_status = (
                     "Failed asset archive completed. "
                     f"Moved to {archive_result['target_folder']}. "
-                    f"Image: {archive_result['image_name']}."
+                    f"Media: {archive_result['media_name']}."
                 )
             except Exception as archive_error:
                 print("Failed to archive failed items:", str(archive_error))
                 archive_status = f"Failed to archive failed item: {archive_error}"
 
-        failed_image_name = (
-            selected_post["image"]["name"]
-            if selected_post and selected_post.get("image")
+        failed_media_name = (
+            selected_post["media"]["name"]
+            if selected_post and selected_post.get("media")
             else "not available"
         )
         send_alert_safely(
             "Reborn IG Auto Publisher Failed: post",
             "\n".join([
                 "Instagram Post publishing failed.",
-                f"Failed image: {failed_image_name}",
+                f"Failed media: {failed_media_name}",
                 f"Error: {e}",
                 f"Archive status: {archive_status}",
                 "",
