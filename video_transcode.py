@@ -88,6 +88,29 @@ def get_video_info(path):
     return codec, width, height, fps, duration
 
 
+def has_audio_stream(path):
+    """True if the file has at least one audio stream. Assumes yes when ffprobe
+    is unavailable so we never strip real audio by mistake."""
+    if not has_tool("ffprobe"):
+        return True
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", "a",
+                "-show_entries", "stream=codec_type",
+                "-of", "default=nokey=1:noprint_wrappers=1",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except Exception:
+        return True
+    return "audio" in result.stdout
+
+
 def ensure_h264(input_path):
     """Return a path to an Instagram/Facebook-friendly H.264/AAC MP4.
 
@@ -120,19 +143,30 @@ def ensure_h264(input_path):
     # Blurred-background pad to a uniform 1080x1920 canvas. For an already-9:16
     # source the foreground fills the frame and the blur is invisible; for
     # other shapes it fills the sides/top-and-bottom without cropping.
-    print(f"Normalising video to {TARGET_WIDTH}x{TARGET_HEIGHT} H.264/AAC (<= {MAX_FPS}fps)...")
-    video_filter = blur_pad_filter()
+    audio_present = has_audio_stream(input_path)
+    print(
+        f"Normalising video to {TARGET_WIDTH}x{TARGET_HEIGHT} H.264/AAC "
+        f"(<= {MAX_FPS}fps, audio_present={audio_present})..."
+    )
 
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", input_path,
-        "-vf", video_filter,
+    # Videos with no audio track are frequently rejected by Instagram
+    # (error 2207077), so inject a silent stereo track when one is missing.
+    cmd = ["ffmpeg", "-y", "-i", input_path]
+    if not audio_present:
+        cmd += ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"]
+
+    cmd += ["-filter_complex", f"[0:v]{blur_pad_filter()}[v]", "-map", "[v]"]
+    cmd += ["-map", "1:a:0"] if not audio_present else ["-map", "0:a:0?"]
+
+    cmd += [
         "-r", str(MAX_FPS),
         "-c:v", "libx264",
         "-profile:v", "high",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "128k",
+        "-ar", "44100",
+        "-shortest",
         "-movflags", "+faststart",
         output_path,
     ]
