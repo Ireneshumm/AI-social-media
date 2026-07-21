@@ -8,6 +8,23 @@ import subprocess
 MAX_WIDTH = 1080
 MAX_FPS = 30
 
+# Target 9:16 canvas for Reels / Stories. Non-9:16 videos are centred on a
+# blurred, filled copy of themselves (no black bars, no cropping).
+TARGET_WIDTH = 1080
+TARGET_HEIGHT = 1920
+TARGET_ASPECT = TARGET_WIDTH / TARGET_HEIGHT  # 0.5625
+ASPECT_TOLERANCE = 0.02
+
+
+def blur_pad_filter():
+    return (
+        f"split=2[bg][fg];"
+        f"[bg]scale={TARGET_WIDTH}:{TARGET_HEIGHT}:force_original_aspect_ratio=increase,"
+        f"crop={TARGET_WIDTH}:{TARGET_HEIGHT},boxblur=luma_radius=40:luma_power=1[bg2];"
+        f"[fg]scale={TARGET_WIDTH}:{TARGET_HEIGHT}:force_original_aspect_ratio=decrease[fg2];"
+        f"[bg2][fg2]overlay=(W-w)/2:(H-h)/2,setsar=1"
+    )
+
 
 def has_tool(name):
     return shutil.which(name) is not None
@@ -71,13 +88,39 @@ def get_video_info(path):
     return codec, width, height, fps, duration
 
 
+def has_audio_stream(path):
+    """True if the file has at least one audio stream. Assumes yes when ffprobe
+    is unavailable so we never strip real audio by mistake."""
+    if not has_tool("ffprobe"):
+        return True
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", "a",
+                "-show_entries", "stream=codec_type",
+                "-of", "default=nokey=1:noprint_wrappers=1",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except Exception:
+        return True
+    return "audio" in result.stdout
+
+
 def ensure_h264(input_path):
     """Return a path to an Instagram/Facebook-friendly H.264/AAC MP4.
 
-    Transcodes when the video is not H.264, or is wider than MAX_WIDTH, or has
-    a frame rate above MAX_FPS (e.g. 4K / 60fps / slow-motion iPhone clips).
-    Already-compliant videos and any environment without ffmpeg fall through
-    with the original file, so publishing is never blocked by transcoding.
+    Always re-encodes the video to a clean, uniform 1080x1920 H.264/AAC MP4
+    (blurred-background padding for non-9:16 sources). Even videos that look
+    compliant on paper can be rejected by Instagram (error 2207077) for subtle
+    reasons - low resolution, odd audio codec, unusual pixel format/profile -
+    so a full normalising pass is the reliable option. Falls back to the
+    original file if ffmpeg is unavailable or the transcode fails, so
+    publishing is never blocked.
     """
     if not has_tool("ffmpeg"):
         print("WARNING: ffmpeg not found; skipping video transcode.")
@@ -94,33 +137,36 @@ def ensure_h264(input_path):
             "at least 3 seconds and will reject it (error 2207077)."
         )
 
-    needs_transcode = (
-        codec != "h264"
-        or (width is not None and width > MAX_WIDTH)
-        or (fps is not None and fps > MAX_FPS + 1)
-    )
-    if not needs_transcode:
-        print("Video already meets requirements; no transcode needed.")
-        return input_path
-
-    print(f"Transcoding to H.264 (<= {MAX_WIDTH}px wide, <= {MAX_FPS}fps)...")
     base, _ = os.path.splitext(input_path)
     output_path = f"{base}_h264.mp4"
 
-    # Downscale only if wider than MAX_WIDTH, keep aspect ratio, force even
-    # dimensions (yuv420p / H.264 require them). Framing is preserved.
-    scale_filter = f"scale='min({MAX_WIDTH},iw)':-2"
+    # Blurred-background pad to a uniform 1080x1920 canvas. For an already-9:16
+    # source the foreground fills the frame and the blur is invisible; for
+    # other shapes it fills the sides/top-and-bottom without cropping.
+    audio_present = has_audio_stream(input_path)
+    print(
+        f"Normalising video to {TARGET_WIDTH}x{TARGET_HEIGHT} H.264/AAC "
+        f"(<= {MAX_FPS}fps, audio_present={audio_present})..."
+    )
 
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", input_path,
-        "-vf", scale_filter,
+    # Videos with no audio track are frequently rejected by Instagram
+    # (error 2207077), so inject a silent stereo track when one is missing.
+    cmd = ["ffmpeg", "-y", "-i", input_path]
+    if not audio_present:
+        cmd += ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"]
+
+    cmd += ["-filter_complex", f"[0:v]{blur_pad_filter()}[v]", "-map", "[v]"]
+    cmd += ["-map", "1:a:0"] if not audio_present else ["-map", "0:a:0?"]
+
+    cmd += [
         "-r", str(MAX_FPS),
         "-c:v", "libx264",
         "-profile:v", "high",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "128k",
+        "-ar", "44100",
+        "-shortest",
         "-movflags", "+faststart",
         output_path,
     ]
