@@ -8,6 +8,23 @@ import subprocess
 MAX_WIDTH = 1080
 MAX_FPS = 30
 
+# Target 9:16 canvas for Reels / Stories. Non-9:16 videos are centred on a
+# blurred, filled copy of themselves (no black bars, no cropping).
+TARGET_WIDTH = 1080
+TARGET_HEIGHT = 1920
+TARGET_ASPECT = TARGET_WIDTH / TARGET_HEIGHT  # 0.5625
+ASPECT_TOLERANCE = 0.02
+
+
+def blur_pad_filter():
+    return (
+        f"split=2[bg][fg];"
+        f"[bg]scale={TARGET_WIDTH}:{TARGET_HEIGHT}:force_original_aspect_ratio=increase,"
+        f"crop={TARGET_WIDTH}:{TARGET_HEIGHT},boxblur=luma_radius=40:luma_power=1[bg2];"
+        f"[fg]scale={TARGET_WIDTH}:{TARGET_HEIGHT}:force_original_aspect_ratio=decrease[fg2];"
+        f"[bg2][fg2]overlay=(W-w)/2:(H-h)/2,setsar=1"
+    )
+
 
 def has_tool(name):
     return shutil.which(name) is not None
@@ -94,27 +111,36 @@ def ensure_h264(input_path):
             "at least 3 seconds and will reject it (error 2207077)."
         )
 
+    aspect = (width / height) if (width and height) else None
+    aspect_is_916 = aspect is not None and abs(aspect - TARGET_ASPECT) <= ASPECT_TOLERANCE
+
     needs_transcode = (
         codec != "h264"
         or (width is not None and width > MAX_WIDTH)
+        or (height is not None and height > TARGET_HEIGHT)
         or (fps is not None and fps > MAX_FPS + 1)
+        or not aspect_is_916
     )
     if not needs_transcode:
         print("Video already meets requirements; no transcode needed.")
         return input_path
 
-    print(f"Transcoding to H.264 (<= {MAX_WIDTH}px wide, <= {MAX_FPS}fps)...")
     base, _ = os.path.splitext(input_path)
     output_path = f"{base}_h264.mp4"
 
-    # Downscale only if wider than MAX_WIDTH, keep aspect ratio, force even
-    # dimensions (yuv420p / H.264 require them). Framing is preserved.
-    scale_filter = f"scale='min({MAX_WIDTH},iw)':-2"
+    if aspect_is_916:
+        # Already 9:16, just cap size/fps and normalise codec. Framing is kept.
+        print(f"Transcoding to H.264 (<= {MAX_WIDTH}px wide, <= {MAX_FPS}fps)...")
+        video_filter = f"scale='min({MAX_WIDTH},iw)':-2"
+    else:
+        # Not 9:16: fit onto a 1080x1920 blurred-background canvas.
+        print(f"Transcoding to H.264 and padding to {TARGET_WIDTH}x{TARGET_HEIGHT} (blurred background)...")
+        video_filter = blur_pad_filter()
 
     cmd = [
         "ffmpeg", "-y",
         "-i", input_path,
-        "-vf", scale_filter,
+        "-vf", video_filter,
         "-r", str(MAX_FPS),
         "-c:v", "libx264",
         "-profile:v", "high",
