@@ -33,7 +33,10 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 IG_USER_ID = os.getenv("IG_USER_ID")
-PAGE_ACCESS_TOKEN = os.getenv("PAGE_ACCESS_TOKEN")
+# Strip whitespace/newlines: a token pasted into a secret often carries a
+# trailing "\n", which is illegal in the Authorization header used for the
+# resumable video upload.
+PAGE_ACCESS_TOKEN = (os.getenv("PAGE_ACCESS_TOKEN") or "").strip()
 GRAPH_VERSION = os.getenv("META_GRAPH_API_VERSION", "v23.0")
 DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
 
