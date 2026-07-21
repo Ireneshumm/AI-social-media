@@ -575,10 +575,59 @@ def publish_media_container(creation_id):
     return resp.json()
 
 
-def publish_instagram_story(media_url, caption, media_kind):
+def create_story_video_container_resumable():
+    # Resumable container so the video bytes go straight to Instagram instead
+    # of being fetched from WordPress (which blocks the video fetcher).
+    url = f"{GRAPH_BASE}/{IG_USER_ID}/media"
+    payload = {
+        "media_type": "STORIES",
+        "upload_type": "resumable",
+        "access_token": PAGE_ACCESS_TOKEN,
+    }
+    resp = post_with_retry(url, payload, timeout=60, label="create_story_video_container_resumable")
+    return resp.json()
+
+
+def upload_video_bytes(creation_id, upload_uri, video_path):
+    if not upload_uri:
+        upload_uri = f"https://rupload.facebook.com/ig-api-upload/{GRAPH_VERSION}/{creation_id}"
+
+    with open(video_path, "rb") as f:
+        video_bytes = f.read()
+
+    headers = {
+        "Authorization": f"OAuth {PAGE_ACCESS_TOKEN}",
+        "offset": "0",
+        "file_size": str(len(video_bytes)),
+    }
+
+    retry_delays = [5, 10]
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            resp = requests.post(upload_uri, headers=headers, data=video_bytes, timeout=300)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as e:
+            last_error = e
+            if attempt < 3:
+                delay = retry_delays[attempt - 1]
+                print(f"WARNING: upload_video_bytes attempt {attempt} failed: {e}")
+                print(f"Retrying in {delay} second(s)...")
+                time.sleep(delay)
+            else:
+                print(f"FAIL: upload_video_bytes attempt {attempt} failed: {e}")
+                if getattr(e, "response", None) is not None:
+                    print_error_response(e)
+
+    raise last_error
+
+
+def publish_instagram_story(media_url, caption, media_kind, media_path=None):
     if media_kind == "video":
-        container = create_story_video_media_container(media_url)
+        container = create_story_video_container_resumable()
         creation_id = container["id"]
+        upload_video_bytes(creation_id, container.get("uri"), media_path)
         wait_for_container_ready(creation_id)
     else:
         container = create_story_media_container(media_url, caption)
@@ -649,16 +698,22 @@ def main():
             media_path = ensure_h264(media_path)
             print()
 
-        print("Step 6: Uploading media to WordPress Media Library...")
-        media_result = upload_media(Path(media_path))
-        media_url = media_result.get("source_url")
+        if media_kind == "video":
+            # Videos go straight to Instagram/Facebook as bytes, so WordPress
+            # hosting (which blocks their video fetchers) is skipped.
+            print("Step 6: Skipping WordPress upload for video (sent directly to Instagram/Facebook).\n")
+            media_url = None
+        else:
+            print("Step 6: Uploading media to WordPress Media Library...")
+            media_result = upload_media(Path(media_path))
+            media_url = media_result.get("source_url")
 
-        if not media_url:
-            raise RuntimeError("WordPress media upload did not return source_url.")
+            if not media_url:
+                raise RuntimeError("WordPress media upload did not return source_url.")
 
-        print("WordPress source_url:")
-        print(media_url)
-        print()
+            print("WordPress source_url:")
+            print(media_url)
+            print()
 
         print("Step 7: Generating story caption with OpenAI (from media content)...")
         content_images = get_caption_image_uris(media_path, media_kind)
@@ -678,7 +733,7 @@ def main():
             sys.exit(0)
 
         print("Step 8: Publishing to Instagram Story...")
-        publish_result = publish_instagram_story(media_url, caption, media_kind)
+        publish_result = publish_instagram_story(media_url, caption, media_kind, media_path=media_path)
         print("Instagram Story publish completed.\n")
 
         print("Publish result:")
