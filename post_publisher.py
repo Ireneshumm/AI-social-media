@@ -12,6 +12,7 @@ from wordpress_media import upload_media
 from alert_email import send_alert_safely
 from facebook_publish import publish_facebook_post, FB_PUBLISH_ENABLED
 from video_transcode import ensure_h264
+from media_analysis import get_caption_image_uris
 
 load_dotenv()
 
@@ -341,10 +342,31 @@ def parse_post_text(text_content):
     return image_url, brief
 
 
-def generate_caption(brief_text):
+def generate_caption(brief_text, image_uris=None):
     client = OpenAI(api_key=OPENAI_API_KEY)
 
-    prompt = f"""
+    if image_uris:
+        prompt = f"""
+You are writing an Instagram caption for Reborn Aesthetics, a premium aesthetics clinic in Brisbane.
+
+The attached image(s) are the actual post media (for a video, they are sampled frames). Look at what is shown and write the caption about that content.
+Use this filename hint only as extra context, it may name the treatment: {brief_text}
+
+Requirements:
+- Base the caption on what you actually see in the image(s)
+- Tone: premium, warm, professional
+- Length: short to medium
+- Make it suitable for an Instagram post
+- Include a soft call to action
+- Add 3 to 5 relevant hashtags
+- No medical claims and no guaranteed results
+"""
+        content = [{"type": "input_text", "text": prompt}]
+        for uri in image_uris:
+            content.append({"type": "input_image", "image_url": uri})
+        model_input = [{"role": "user", "content": content}]
+    else:
+        prompt = f"""
 You are writing an Instagram caption for Reborn Aesthetics, a premium aesthetics clinic in Brisbane.
 
 Use the following content brief:
@@ -357,6 +379,7 @@ Requirements:
 - Include a soft call to action
 - Add 3 to 5 relevant hashtags
 """
+        model_input = prompt
 
     retry_delays = [5, 10]
     last_error = None
@@ -365,7 +388,7 @@ Requirements:
         try:
             response = client.responses.create(
                 model=OPENAI_MODEL,
-                input=prompt
+                input=model_input
             )
             return response.output_text.strip()
         except Exception as e:
@@ -628,8 +651,13 @@ def main():
         print(media_url)
         print()
 
-        print("Step 7: Generating caption with OpenAI...")
-        caption = generate_caption(brief_text)
+        print("Step 7: Generating caption with OpenAI (from media content)...")
+        content_images = get_caption_image_uris(media_path, media_kind)
+        if content_images:
+            print(f"Analyzing {len(content_images)} image(s) from the media for the caption.")
+        else:
+            print("No media images available; using filename brief only.")
+        caption = generate_caption(brief_text, image_uris=content_images)
         print("Caption generated.\n")
 
         print("Generated caption:")
