@@ -26,16 +26,17 @@ def _parse_fps(rate):
 
 
 def get_video_info(path):
-    """Return (codec, width, fps) for the first video stream, or (None, None, None)."""
+    """Return (codec, width, height, fps, duration) for the first video stream.
+    Missing values come back as None."""
     if not has_tool("ffprobe"):
-        return None, None, None
+        return None, None, None, None, None
 
     try:
         result = subprocess.run(
             [
                 "ffprobe", "-v", "error",
                 "-select_streams", "v:0",
-                "-show_entries", "stream=codec_name,width,r_frame_rate",
+                "-show_entries", "stream=codec_name,width,height,r_frame_rate:format=duration",
                 "-of", "default=nokey=1:noprint_wrappers=1",
                 path,
             ],
@@ -45,21 +46,29 @@ def get_video_info(path):
         )
     except Exception as e:
         print(f"WARNING: ffprobe failed to read video info: {e}")
-        return None, None, None
+        return None, None, None, None, None
 
     lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    codec = lines[0].lower() if len(lines) >= 1 else None
-    width = None
-    fps = None
-    if len(lines) >= 2:
-        try:
-            width = int(lines[1])
-        except ValueError:
-            width = None
-    if len(lines) >= 3:
-        fps = _parse_fps(lines[2])
 
-    return codec, width, fps
+    def _int(value):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _float(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    codec = lines[0].lower() if len(lines) >= 1 else None
+    width = _int(lines[1]) if len(lines) >= 2 else None
+    height = _int(lines[2]) if len(lines) >= 3 else None
+    fps = _parse_fps(lines[3]) if len(lines) >= 4 else None
+    duration = _float(lines[4]) if len(lines) >= 5 else None
+
+    return codec, width, height, fps, duration
 
 
 def ensure_h264(input_path):
@@ -74,8 +83,16 @@ def ensure_h264(input_path):
         print("WARNING: ffmpeg not found; skipping video transcode.")
         return input_path
 
-    codec, width, fps = get_video_info(input_path)
-    print(f"Source video: codec={codec}, width={width}, fps={fps}")
+    codec, width, height, fps, duration = get_video_info(input_path)
+    print(
+        f"Source video: codec={codec}, width={width}, height={height}, "
+        f"fps={fps}, duration={duration}s"
+    )
+    if duration is not None and duration < 3:
+        print(
+            "WARNING: video is shorter than 3s; Instagram Reels/Story require "
+            "at least 3 seconds and will reject it (error 2207077)."
+        )
 
     needs_transcode = (
         codec != "h264"
