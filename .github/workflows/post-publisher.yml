@@ -44,6 +44,11 @@ on:
         options:
           - feed
           - story
+      ad_target:
+        description: "Target folder (generate only, blank = drafts/stories default)"
+        required: false
+        default: ""
+        type: string
   schedule:
     - cron: "10 23 * * *"
     - cron: "10 3 * * *"
@@ -191,6 +196,7 @@ jobs:
           AD_LAYOUT: ${{ inputs.ad_layout || secrets.AD_LAYOUT }}
           AD_COUNT: ${{ inputs.ad_count || secrets.AD_COUNT }}
           AD_FORMAT: ${{ inputs.ad_format || secrets.AD_FORMAT }}
+          AD_TARGET_FOLDER: ${{ inputs.ad_target || secrets.AD_TARGET_FOLDER }}
         run: |
           if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 3 * * 1" ]; then
             PUBLISHER_TYPE="token_check"
