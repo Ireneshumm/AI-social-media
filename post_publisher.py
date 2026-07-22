@@ -361,6 +361,16 @@ def parse_post_text(text_content):
     return image_url, brief
 
 
+# Fixed booking call-to-action appended to every post caption, so every post
+# consistently directs people to book online. The AI writes only the body and
+# hashtags (no CTA of its own) to avoid conflicting or duplicate instructions.
+BOOKING_CTA = (
+    "All bookings are made online at https://www.rebornaesthetics.com.au/ — just click "
+    "“Book Now”. If you’re unsure which treatment suits you, book a complimentary "
+    "consultation for a personalised plan."
+)
+
+
 def generate_caption(brief_text, image_uris=None):
     client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -376,7 +386,7 @@ Requirements:
 - Tone: premium, warm, professional
 - Length: short to medium
 - Make it suitable for an Instagram post
-- Include a soft call to action
+- Do NOT include any call to action, booking instructions, links, phone numbers, or "book now" wording (a fixed booking line is added automatically after your text)
 - Add 3 to 5 relevant hashtags
 - No medical claims and no guaranteed results
 """
@@ -395,8 +405,9 @@ Requirements:
 - Tone: premium, warm, professional
 - Length: short to medium
 - Make it suitable for an Instagram post
-- Include a soft call to action
+- Do NOT include any call to action, booking instructions, links, phone numbers, or "book now" wording (a fixed booking line is added automatically after your text)
 - Add 3 to 5 relevant hashtags
+- No medical claims and no guaranteed results
 """
         model_input = prompt
 
@@ -409,7 +420,8 @@ Requirements:
                 model=OPENAI_MODEL,
                 input=model_input
             )
-            return response.output_text.strip()
+            body = response.output_text.strip()
+            return f"{body}\n\n{BOOKING_CTA}"
         except Exception as e:
             last_error = e
 
