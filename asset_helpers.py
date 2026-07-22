@@ -81,6 +81,38 @@ def is_story_media(item):
     return "_story_" in name
 
 
+def content_group(filename):
+    """A coarse 'kind of content' key used to avoid posting similar items back
+    to back. For generated files (ai_<topic>_...) it is the topic; otherwise the
+    first word of the name."""
+    stem = Path(filename).stem.lower()
+    parts = [p for p in re.split(r"[-_]+", stem) if p]
+    if not parts:
+        return stem
+    if parts[0] == "ai" and len(parts) >= 2:
+        return parts[1]
+    return parts[0]
+
+
+def recent_content_groups(items, n=2):
+    """The content groups of the most recently archived items (newest first),
+    so the next pick can steer away from them for variety."""
+    dated = [
+        (item.get("lastModifiedDateTime") or "", item.get("name") or "")
+        for item in items
+        if "folder" not in item and item.get("name")
+    ]
+    dated.sort(reverse=True)
+    return {content_group(name) for _, name in dated[:n]}
+
+
+def pick_with_variety(matched, recent_groups, rng):
+    """Choose a media dict, preferring one whose content group was not among the
+    most recently posted. Falls back to any when every option repeats."""
+    fresh = [m for m in matched if content_group(m["media"]["name"]) not in recent_groups]
+    return rng.choice(fresh or matched)
+
+
 def filename_to_brief(filename):
     if not filename:
         raise ValueError("Filename is empty.")
