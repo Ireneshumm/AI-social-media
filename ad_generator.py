@@ -29,11 +29,18 @@ MS_CLIENT_ID = os.getenv("MS_CLIENT_ID")
 MS_CLIENT_SECRET = os.getenv("MS_CLIENT_SECRET")
 ONEDRIVE_ROOT_PATH = os.getenv("ONEDRIVE_ROOT_PATH") or "IG Auto Publisher"
 ONEDRIVE_DRAFTS_FOLDER_NAME = os.getenv("ONEDRIVE_DRAFTS_FOLDER_NAME") or "drafts"
+ONEDRIVE_STORIES_FOLDER_NAME = os.getenv("ONEDRIVE_STORIES_FOLDER_NAME") or "stories"
 ONEDRIVE_USER_EMAIL = os.getenv("ONEDRIVE_USER_EMAIL") or "info@rebornaesthetics.com.au"
 
-# Where finished ads land. Default is the review folder "drafts"; the automated
-# schedule overrides this to the publish queue ("posts") for hands-off posting.
-GENERATE_TARGET_FOLDER = os.getenv("AD_TARGET_FOLDER") or ONEDRIVE_DRAFTS_FOLDER_NAME
+# Output format: "feed" = 1080x1350 post (campaign/hero layouts); "story" =
+# 1080x1920 vertical story. Story generation defaults to the stories folder.
+AD_FORMAT = (os.getenv("AD_FORMAT") or "feed").strip().lower()
+
+# Where finished images land. Default is the review folder "drafts" (or "stories"
+# for story format); the automated schedule overrides this to the live publish
+# queue ("posts"/"stories") for hands-off posting.
+_DEFAULT_TARGET = ONEDRIVE_STORIES_FOLDER_NAME if AD_FORMAT == "story" else ONEDRIVE_DRAFTS_FOLDER_NAME
+GENERATE_TARGET_FOLDER = os.getenv("AD_TARGET_FOLDER") or _DEFAULT_TARGET
 
 
 def _int_env(name, default, lo=1, hi=10):
@@ -612,15 +619,17 @@ def _draw_button(draw, cx, cy, w, h, label):
 
 def _scrim(canvas, box_h, at_bottom, color, max_alpha, power=1.5):
     # A soft vertical gradient of `color` fading to transparent, so text stays
-    # legible over any hero photo.
+    # legible over any hero photo. Uses the canvas's own dimensions so it works
+    # for both feed (1080x1350) and story (1080x1920) canvases.
+    w, h = canvas.size
     grad = Image.new("L", (1, box_h), 0)
     for y in range(box_h):
         t = y / box_h
         edge = t if at_bottom else (1 - t)
         grad.putpixel((0, y), int(max_alpha * (edge ** power)))
-    grad = grad.resize((CANVAS_W, box_h))
-    layer = Image.new("RGB", (CANVAS_W, box_h), color)
-    y0 = CANVAS_H - box_h if at_bottom else 0
+    grad = grad.resize((w, box_h))
+    layer = Image.new("RGB", (w, box_h), color)
+    y0 = h - box_h if at_bottom else 0
     canvas.paste(layer, (0, y0), grad)
 
 
@@ -669,7 +678,59 @@ def compose_ad_hero(hero_bytes, topic):
     return canvas
 
 
+# =========================
+# Composition C: vertical 9:16 story
+# =========================
+STORY_W, STORY_H = 1080, 1920
+
+
+def compose_story(hero_bytes, topic):
+    hero = Image.open(BytesIO(hero_bytes)).convert("RGB")
+    canvas = fit_cover(hero, STORY_W, STORY_H).copy()
+
+    dark = (26, 18, 12)
+    _scrim(canvas, 1040, True, dark, 225)    # bottom, for headline block
+    _scrim(canvas, 420, False, dark, 130)    # top, for wordmark
+    draw = ImageDraw.Draw(canvas, "RGBA")
+
+    cream = (236, 227, 213)
+    cx = STORY_W / 2
+
+    # --- Inset frame ---
+    m = 46
+    draw.rectangle([m, m, STORY_W - m, STORY_H - m], outline=(240, 232, 219, 150), width=2)
+
+    # --- Wordmark (top-center) ---
+    draw_center_x(draw, cx, 122, "REBORN", font("serif_medium", 58), LIGHT, tracking=14)
+    draw_center_x(draw, cx, 194, "AESTHETICS", font("sans_light", 18), cream, tracking=9)
+
+    # --- Bottom headline block (anchored near the base, built upward) ---
+    hf = font("serif_medium", 110)
+    lines = wrap_lines(draw, " ".join(topic["headline_lines"]), hf, STORY_W - 300)
+    end_y = 1508
+    hy = end_y - len(lines) * 108
+    for line in lines:
+        draw_center_x(draw, cx, hy, line, hf, LIGHT, tracking=1)
+        hy += 108
+
+    draw.line([(cx - 46, end_y + 16), (cx + 46, end_y + 16)], fill=GOLD, width=2)
+    draw_center_x(draw, cx, end_y + 38, topic["tagline"], font("serif_italic", 41), cream, tracking=1)
+    draw_center_x(draw, cx, end_y + 104, topic["price"], font("sans_light", 26), LIGHT, tracking=3)
+
+    _draw_button(draw, cx, end_y + 196, 360, 72, "BOOK NOW")
+
+    draw_center_x(
+        draw, cx, STORY_H - 118,
+        f"{FOOTER['tagline']}   ·   {FOOTER['contact'].split('·')[-1].strip()}",
+        font("sans_light", 17), cream, tracking=2,
+    )
+
+    return canvas
+
+
 def compose(hero_bytes, topic, layout):
+    if layout == "story":
+        return compose_story(hero_bytes, topic)
     if layout == "hero":
         return compose_ad_hero(hero_bytes, topic)
     return compose_ad(hero_bytes, topic)
@@ -837,35 +898,46 @@ def build_and_upload(hero_bytes, topic, layout, mode, token, folder_id, target):
     return filename
 
 
+def generate_one(index, count, token, folder_id, target):
+    topic = pick_topic()
+    mode = pick_photo_mode(topic)
+    if AD_FORMAT == "story":
+        layouts = ["story"]
+    else:
+        layout = pick_layout()
+        layouts = ["campaign", "hero"] if layout == "both" else [layout]
+    print(f"\n[{index + 1}/{count}] topic={topic['key']} | format={AD_FORMAT} | layouts={layouts} | photo={mode}")
+
+    hero_bytes, used_mode = generate_hero(topic, mode)
+    print(f"  hero generated ({len(hero_bytes)} bytes, photo={used_mode})")
+    return [build_and_upload(hero_bytes, topic, lay, used_mode, token, folder_id, target) for lay in layouts]
+
+
 def main():
     try:
         validate_env()
         count = _int_env("AD_COUNT", 1)
         target = GENERATE_TARGET_FOLDER
-        print(f"Generating {count} ad(s) into '{target}'.")
-
+        print(f"Generating {count} {AD_FORMAT} image(s) into '{target}'.")
         token = get_access_token()
         folder_id = ensure_target_folder(token, target)
-
-        made = []
-        for i in range(count):
-            topic = pick_topic()
-            layout = pick_layout()
-            mode = pick_photo_mode(topic)
-            layouts = ["campaign", "hero"] if layout == "both" else [layout]
-            print(f"\n[{i + 1}/{count}] topic={topic['key']} | layout={layout} | photo={mode}")
-
-            hero_bytes, used_mode = generate_hero(topic, mode)
-            print(f"  hero generated ({len(hero_bytes)} bytes, photo={used_mode})")
-            for lay in layouts:
-                made.append(build_and_upload(hero_bytes, topic, lay, used_mode, token, folder_id, target))
-
-        print(f"\nDone. Uploaded {len(made)} image(s) to '{target}'.")
-        sys.exit(0)
-
     except Exception as e:
-        print("\nERROR:", str(e))
+        print("\nERROR (setup):", str(e))
         sys.exit(1)
+
+    # Each image is independent: a single moderation/API hiccup must not abandon
+    # the rest of the batch, so per-item failures are caught and logged.
+    made, failures = [], 0
+    for i in range(count):
+        try:
+            made.extend(generate_one(i, count, token, folder_id, target))
+        except Exception as e:
+            failures += 1
+            print(f"  [{i + 1}/{count}] FAILED (skipping): {e}")
+
+    print(f"\nDone. Uploaded {len(made)} image(s) to '{target}'; {failures} item(s) failed.")
+    # Succeed if at least one image was produced; only a total wipeout is a failure.
+    sys.exit(0 if made else 1)
 
 
 if __name__ == "__main__":

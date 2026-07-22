@@ -36,6 +36,14 @@ on:
         required: false
         default: ""
         type: string
+      ad_format:
+        description: "Format (generate only)"
+        required: false
+        default: feed
+        type: choice
+        options:
+          - feed
+          - story
   schedule:
     - cron: "10 23 * * *"
     - cron: "10 3 * * *"
@@ -43,6 +51,7 @@ on:
     - cron: "0 3 * * 1"
     - cron: "30 15 * * 0"
     - cron: "30 22 * * *"
+    - cron: "0 21 * * *"
 
 permissions:
   contents: read
@@ -181,18 +190,27 @@ jobs:
           AD_TOPIC: ${{ inputs.ad_topic || secrets.AD_TOPIC }}
           AD_LAYOUT: ${{ inputs.ad_layout || secrets.AD_LAYOUT }}
           AD_COUNT: ${{ inputs.ad_count || secrets.AD_COUNT }}
+          AD_FORMAT: ${{ inputs.ad_format || secrets.AD_FORMAT }}
         run: |
           if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 3 * * 1" ]; then
             PUBLISHER_TYPE="token_check"
           elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "30 15 * * 0" ]; then
             PUBLISHER_TYPE="cleanup"
           elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "30 22 * * *" ]; then
-            # Daily autonomous content: generate 3 ads straight into the publish
+            # Daily autonomous feed posts: generate 3 ads straight into the publish
             # queue so the 3 daily post crons have fresh content to post.
             PUBLISHER_TYPE="generate"
+            export AD_FORMAT="feed"
             export AD_TARGET_FOLDER="${ONEDRIVE_POSTS_FOLDER_NAME:-posts}"
             export AD_LAYOUT="random"
             export AD_COUNT="3"
+          elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 21 * * *" ]; then
+            # Daily autonomous stories: generate vertical 9:16 stories into the
+            # story queue for the hourly story publisher to post through the day.
+            PUBLISHER_TYPE="generate"
+            export AD_FORMAT="story"
+            export AD_TARGET_FOLDER="${ONEDRIVE_STORIES_FOLDER_NAME:-stories}"
+            export AD_COUNT="10"
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             PUBLISHER_TYPE="${{ inputs.publisher_type }}"
           else
