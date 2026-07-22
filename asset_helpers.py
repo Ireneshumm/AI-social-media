@@ -33,6 +33,41 @@ def get_media_kind(filename):
     return None
 
 
+# Files produced by the AI generator carry this prefix, so cleanup can delete
+# only auto-generated content and keep the user's own uploads forever.
+AI_GENERATED_PREFIX = "ai_"
+
+
+def is_ai_generated(filename):
+    return bool(filename) and Path(filename).name.lower().startswith(AI_GENERATED_PREFIX)
+
+
+def get_item_dimensions(item):
+    """Return (width, height) from a OneDrive driveItem's image/video facet."""
+    for facet in ("image", "video"):
+        data = item.get(facet)
+        if isinstance(data, dict):
+            width, height = data.get("width"), data.get("height")
+            if width and height:
+                return int(width), int(height)
+    return None
+
+
+def is_vertical_item(item, threshold=1.5):
+    """Route media by shape from a single folder.
+
+    Returns True for a tall/story shape (9:16 ≈ 1.78), False for a feed shape
+    (1:1, 4:5 ≈ 1.25, landscape), and None when dimensions are unavailable.
+    Callers treat None as feed so every file is claimed by exactly one channel."""
+    dims = get_item_dimensions(item)
+    if not dims:
+        return None
+    width, height = dims
+    if width <= 0:
+        return None
+    return (height / width) >= threshold
+
+
 def filename_to_brief(filename):
     if not filename:
         raise ValueError("Filename is empty.")
