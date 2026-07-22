@@ -18,6 +18,7 @@ on:
           - generate
           - insights_check
           - insights_report
+          - retry_failed
       ad_layout:
         description: "Ad layout (generate only)"
         required: false
@@ -60,6 +61,7 @@ on:
     - cron: "30 22 * * *"
     - cron: "0 21 * * *"
     - cron: "0 23 * * 1"
+    - cron: "15 */6 * * *"
 
 permissions:
   contents: read
@@ -207,6 +209,8 @@ jobs:
             PUBLISHER_TYPE="cleanup"
           elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 23 * * 1" ]; then
             PUBLISHER_TYPE="insights_report"
+          elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "15 */6 * * *" ]; then
+            PUBLISHER_TYPE="retry_failed"
           elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "30 22 * * *" ]; then
             # Daily autonomous feed posts: generate 3 ads straight into the publish
             # queue so the 3 daily post crons have fresh content to post.
@@ -237,6 +241,8 @@ jobs:
             python insights_check.py
           elif [ "${PUBLISHER_TYPE}" = "insights_report" ]; then
             python insights_report.py
+          elif [ "${PUBLISHER_TYPE}" = "retry_failed" ]; then
+            python retry_failed.py
           elif [ "${PUBLISHER_TYPE}" = "cleanup" ]; then
             python cleanup.py
           elif [ "${PUBLISHER_TYPE}" = "generate" ]; then
