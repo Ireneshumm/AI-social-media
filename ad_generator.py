@@ -31,6 +31,20 @@ ONEDRIVE_ROOT_PATH = os.getenv("ONEDRIVE_ROOT_PATH") or "IG Auto Publisher"
 ONEDRIVE_DRAFTS_FOLDER_NAME = os.getenv("ONEDRIVE_DRAFTS_FOLDER_NAME") or "drafts"
 ONEDRIVE_USER_EMAIL = os.getenv("ONEDRIVE_USER_EMAIL") or "info@rebornaesthetics.com.au"
 
+# Where finished ads land. Default is the review folder "drafts"; the automated
+# schedule overrides this to the publish queue ("posts") for hands-off posting.
+GENERATE_TARGET_FOLDER = os.getenv("AD_TARGET_FOLDER") or ONEDRIVE_DRAFTS_FOLDER_NAME
+
+
+def _int_env(name, default, lo=1, hi=10):
+    # `or` so an empty-string secret still falls back; clamp to a sane range so a
+    # misconfigured value can never trigger a runaway number of OpenAI calls.
+    raw = os.getenv(name) or str(default)
+    try:
+        return max(lo, min(hi, int(raw)))
+    except ValueError:
+        return default
+
 AUTHORITY = f"https://login.microsoftonline.com/{MS_TENANT_ID}"
 SCOPES = ["https://graph.microsoft.com/.default"]
 
@@ -736,7 +750,7 @@ def _find_folder(items, name):
     return None
 
 
-def ensure_drafts_folder(token):
+def ensure_target_folder(token, folder_name):
     root = _graph("GET", f"https://graph.microsoft.com/v1.0/users/{ONEDRIVE_USER_EMAIL}/drive/root/children", token).json()
     project = _find_folder(root, ONEDRIVE_ROOT_PATH)
     if not project:
@@ -744,13 +758,13 @@ def ensure_drafts_folder(token):
 
     children_url = f"https://graph.microsoft.com/v1.0/users/{ONEDRIVE_USER_EMAIL}/drive/items/{project['id']}/children"
     children = _graph("GET", children_url, token).json()
-    drafts = _find_folder(children, ONEDRIVE_DRAFTS_FOLDER_NAME)
-    if drafts:
-        return drafts["id"]
+    folder = _find_folder(children, folder_name)
+    if folder:
+        return folder["id"]
 
     created = _graph(
         "POST", children_url, token,
-        json={"name": ONEDRIVE_DRAFTS_FOLDER_NAME, "folder": {}, "@microsoft.graph.conflictBehavior": "rename"},
+        json={"name": folder_name, "folder": {}, "@microsoft.graph.conflictBehavior": "rename"},
     ).json()
     return created["id"]
 
@@ -783,14 +797,17 @@ def pick_layout():
     return random.choice(["campaign", "hero"])
 
 
-def build_and_upload(hero_bytes, topic, layout, token, folder_id):
+def build_and_upload(hero_bytes, topic, layout, mode, token, folder_id, target):
     ad = compose(hero_bytes, topic, layout)
     buffer = BytesIO()
     ad.save(buffer, format="JPEG", quality=92)
     ad_bytes = buffer.getvalue()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{topic['key']}_{layout}_{timestamp}.jpg"
+    # A short random suffix keeps filenames unique even when several are produced
+    # within the same second in one batch run.
+    suffix = "".join(random.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(4))
+    filename = f"{topic['key']}_{mode}_{layout}_{timestamp}_{suffix}.jpg"
 
     # Keep a local copy too, so CI can expose the render as an artifact for review.
     try:
@@ -801,30 +818,34 @@ def build_and_upload(hero_bytes, topic, layout, token, folder_id):
         print(f"WARNING: could not write local copy: {e}")
 
     upload_draft(token, folder_id, filename, ad_bytes)
-    print(f"Draft uploaded ({layout}, {len(ad_bytes)} bytes): {ONEDRIVE_DRAFTS_FOLDER_NAME}/{filename}")
+    print(f"Uploaded ({layout}, {len(ad_bytes)} bytes): {target}/{filename}")
     return filename
 
 
 def main():
     try:
         validate_env()
-        topic = pick_topic()
-        layout = pick_layout()
-        mode = pick_photo_mode(topic)
-        layouts = ["campaign", "hero"] if layout == "both" else [layout]
-        print(f"Selected topic: {topic['key']} - {' '.join(topic['headline_lines'])} | layout: {layout} | photo: {mode}")
+        count = _int_env("AD_COUNT", 1)
+        target = GENERATE_TARGET_FOLDER
+        print(f"Generating {count} ad(s) into '{target}'.")
 
-        print("Step 1: Generating hero image with OpenAI...")
-        hero_bytes = generate_hero(topic, mode)
-        print(f"Hero image generated ({len(hero_bytes)} bytes).")
-
-        print("Step 2: Composing + uploading to OneDrive drafts folder...")
         token = get_access_token()
-        folder_id = ensure_drafts_folder(token)
-        for lay in layouts:
-            build_and_upload(hero_bytes, topic, lay, token, folder_id)
+        folder_id = ensure_target_folder(token, target)
 
-        print("\nAd draft(s) created. Review in the drafts folder and move into posts to publish.")
+        made = []
+        for i in range(count):
+            topic = pick_topic()
+            layout = pick_layout()
+            mode = pick_photo_mode(topic)
+            layouts = ["campaign", "hero"] if layout == "both" else [layout]
+            print(f"\n[{i + 1}/{count}] topic={topic['key']} | layout={layout} | photo={mode}")
+
+            hero_bytes = generate_hero(topic, mode)
+            print(f"  hero generated ({len(hero_bytes)} bytes)")
+            for lay in layouts:
+                made.append(build_and_upload(hero_bytes, topic, lay, mode, token, folder_id, target))
+
+        print(f"\nDone. Uploaded {len(made)} image(s) to '{target}'.")
         sys.exit(0)
 
     except Exception as e:
