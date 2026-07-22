@@ -9,6 +9,8 @@ from msal import ConfidentialClientApplication
 from openai import OpenAI
 import random
 
+from PIL import Image, ImageEnhance, ImageFilter
+
 from asset_helpers import (
     is_supported_media_file,
     get_media_kind,
@@ -673,6 +675,60 @@ def publish_instagram_story(media_url, caption, media_kind, media_path=None):
 
 
 # =========================
+# Story image fitting (never crop or squish)
+# =========================
+STORY_W, STORY_H = 1080, 1920
+
+
+def _resize_cover(img, w, h):
+    ratio_src, ratio_dst = img.width / img.height, w / h
+    if ratio_src > ratio_dst:
+        new_h, new_w = h, max(w, round(h * ratio_src))
+    else:
+        new_w, new_h = w, max(h, round(w / ratio_src))
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+    left, top = (new_w - w) // 2, (new_h - h) // 2
+    return img.crop((left, top, left + w, top + h))
+
+
+def _resize_contain(img, max_w, max_h):
+    scale = min(max_w / img.width, max_h / img.height)
+    return img.resize((max(1, round(img.width * scale)), max(1, round(img.height * scale))), Image.LANCZOS)
+
+
+def ensure_story_image(path):
+    """Fit any image onto a clean 1080x1920 story canvas.
+
+    A 9:16 image is used as-is (cover). Any other shape is centered at full size
+    over a softly blurred, slightly darkened background fill — so the whole
+    image stays visible and is never cropped or stretched out of shape."""
+    try:
+        img = Image.open(path).convert("RGB")
+    except Exception as e:
+        print(f"WARNING: could not open image for story fit ({e}); using original.")
+        return path
+
+    os.makedirs("temp", exist_ok=True)
+    out_path = os.path.join("temp", "story_" + os.path.splitext(os.path.basename(path))[0] + ".jpg")
+
+    target = STORY_W / STORY_H
+    ratio = img.width / img.height
+    if abs(ratio - target) < 0.02:
+        _resize_cover(img, STORY_W, STORY_H).save(out_path, "JPEG", quality=92)
+        print("Story image already ~9:16; normalized to 1080x1920.")
+        return out_path
+
+    background = _resize_cover(img, STORY_W, STORY_H).filter(ImageFilter.GaussianBlur(45))
+    background = ImageEnhance.Brightness(background).enhance(0.9)
+    foreground = _resize_contain(img, int(STORY_W * 0.92), int(STORY_H * 0.92))
+    canvas = background.copy()
+    canvas.paste(foreground, ((STORY_W - foreground.width) // 2, (STORY_H - foreground.height) // 2))
+    canvas.save(out_path, "JPEG", quality=92)
+    print(f"Story image fitted to 1080x1920 with blurred padding (full content, no crop): {out_path}")
+    return out_path
+
+
+# =========================
 # Main flow
 # =========================
 def main():
@@ -739,6 +795,10 @@ def main():
         if media_kind == "video":
             print("Step 5b: Ensuring video is H.264 (transcode if needed)...")
             media_path = ensure_h264(media_path)
+            print()
+        else:
+            print("Step 5b: Fitting image to a 1080x1920 story canvas (no crop / no squish)...")
+            media_path = ensure_story_image(media_path)
             print()
 
         if media_kind == "video":
