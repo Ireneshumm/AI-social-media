@@ -7,7 +7,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 from msal import ConfidentialClientApplication
 from openai import OpenAI
-from asset_helpers import is_supported_media_file, get_media_kind, filename_to_brief
+import random
+
+from asset_helpers import is_supported_media_file, get_media_kind, filename_to_brief, is_story_media
 from wordpress_media import upload_media
 from alert_email import send_alert_safely
 from facebook_publish import publish_facebook_post, FB_PUBLISH_ENABLED
@@ -306,18 +308,25 @@ def archive_post_assets(token, selected_post, success=True):
 # Asset matching
 # =========================
 def match_post_assets(items):
+    # A single drop folder feeds both channels: tall/vertical (9:16) media is
+    # reserved for Stories, so feed posting takes everything that is NOT vertical
+    # (feed-shaped, plus any file whose dimensions are unknown).
     matched = []
     for item in items:
         if "folder" in item:
             continue
 
         name = item.get("name", "")
-        if is_supported_media_file(name):
-            matched.append({
-                "base_name": os.path.splitext(name)[0],
-                "media": item,
-                "kind": get_media_kind(name),
-            })
+        if not is_supported_media_file(name):
+            continue
+        if is_story_media(item):
+            continue
+
+        matched.append({
+            "base_name": os.path.splitext(name)[0],
+            "media": item,
+            "kind": get_media_kind(name),
+        })
 
     matched.sort(key=lambda x: x["base_name"])
     return matched
@@ -655,15 +664,18 @@ def main():
         items = get_posts_items(token)
         print(f"Found {len(items)} item(s) in posts/\n")
 
-        print("Step 3: Finding post image assets...")
+        print("Step 3: Finding feed-shaped post assets...")
         matched = match_post_assets(items)
 
         if not matched:
-            print("No valid post image assets found. Exit gracefully.")
+            print("No valid feed post assets found. Exit gracefully.")
             sys.exit(0)
 
-        selected_post = matched[0]
+        # Pick at random rather than oldest-first, so the feed rotates through
+        # different content day to day instead of draining in upload order.
+        selected_post = random.choice(matched)
         media_kind = selected_post["kind"]
+        print(f"{len(matched)} feed asset(s) available; randomly selected one for variety.")
         print(f"Selected post: {selected_post['base_name']}")
         print(f"Media file: {selected_post['media']['name']} (kind: {media_kind})\n")
 

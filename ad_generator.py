@@ -881,9 +881,10 @@ def build_and_upload(hero_bytes, topic, layout, mode, token, folder_id, target):
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     # A short random suffix keeps filenames unique even when several are produced
-    # within the same second in one batch run.
+    # within the same second in one batch run. The "ai_" prefix marks the file as
+    # auto-generated so cleanup only ever removes AI content, never user uploads.
     suffix = "".join(random.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(4))
-    filename = f"{topic['key']}_{mode}_{layout}_{timestamp}_{suffix}.jpg"
+    filename = f"ai_{topic['key']}_{mode}_{layout}_{timestamp}_{suffix}.jpg"
 
     # Keep a local copy too, so CI can expose the render as an artifact for review.
     try:

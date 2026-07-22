@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from msal import ConfidentialClientApplication
 
 from alert_email import send_alert_safely
+from asset_helpers import is_ai_generated
 
 load_dotenv()
 
@@ -165,6 +166,13 @@ def cleanup_folder(token, subfolder_name, cutoff):
             continue
 
         name = item.get("name", "")
+
+        # Only auto-generated files (ai_ prefix) are ever deleted; the user's own
+        # uploaded assets are kept forever.
+        if not is_ai_generated(name):
+            kept += 1
+            continue
+
         modified = parse_timestamp(item.get("lastModifiedDateTime"))
         if modified is None:
             print(f"KEEP (no timestamp): {name}")

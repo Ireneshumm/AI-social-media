@@ -212,10 +212,11 @@ jobs:
             export AD_COUNT="3"
           elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 21 * * *" ]; then
             # Daily autonomous stories: generate vertical 9:16 stories into the
-            # story queue for the hourly story publisher to post through the day.
+            # single drop folder ("posts"); aspect-ratio routing sends them to the
+            # hourly story publisher.
             PUBLISHER_TYPE="generate"
             export AD_FORMAT="story"
-            export AD_TARGET_FOLDER="${ONEDRIVE_STORIES_FOLDER_NAME:-stories}"
+            export AD_TARGET_FOLDER="${ONEDRIVE_POSTS_FOLDER_NAME:-posts}"
             export AD_COUNT="10"
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             PUBLISHER_TYPE="${{ inputs.publisher_type }}"

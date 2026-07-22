@@ -7,7 +7,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 from msal import ConfidentialClientApplication
 from openai import OpenAI
-from asset_helpers import is_supported_media_file, get_media_kind, filename_to_brief
+import random
+
+from asset_helpers import is_supported_media_file, get_media_kind, filename_to_brief, is_story_media
 from wordpress_media import upload_media
 from alert_email import send_alert_safely
 from facebook_publish import publish_facebook_story, FB_PUBLISH_ENABLED
@@ -24,6 +26,7 @@ MS_CLIENT_ID = os.getenv("MS_CLIENT_ID")
 MS_CLIENT_SECRET = os.getenv("MS_CLIENT_SECRET")
 
 ONEDRIVE_ROOT_PATH = os.getenv("ONEDRIVE_ROOT_PATH", "IG Auto Publisher")
+ONEDRIVE_POSTS_FOLDER_NAME = os.getenv("ONEDRIVE_POSTS_FOLDER_NAME", "posts")
 ONEDRIVE_STORIES_FOLDER_NAME = os.getenv("ONEDRIVE_STORIES_FOLDER_NAME", "stories")
 ONEDRIVE_POSTED_FOLDER_NAME = os.getenv("ONEDRIVE_POSTED_FOLDER_NAME", "posted")
 ONEDRIVE_FAILED_FOLDER_NAME = os.getenv("ONEDRIVE_FAILED_FOLDER_NAME", "failed")
@@ -200,15 +203,27 @@ def get_project_children(token):
 
 
 def get_stories_items(token):
+    # Stories are drawn from the same single drop folder as feed posts ("posts");
+    # aspect-ratio routing keeps them distinct. The legacy "stories" folder is
+    # also read so anything already placed there is not stranded.
     _, project_children = get_project_children(token)
 
-    stories_folder = find_named_folder(project_children, ONEDRIVE_STORIES_FOLDER_NAME)
-    if not stories_folder:
-        raise Exception(f"Stories folder not found: {ONEDRIVE_STORIES_FOLDER_NAME}")
+    source_names = [ONEDRIVE_POSTS_FOLDER_NAME]
+    if ONEDRIVE_STORIES_FOLDER_NAME not in source_names:
+        source_names.append(ONEDRIVE_STORIES_FOLDER_NAME)
 
-    stories_children_url = f"https://graph.microsoft.com/v1.0/users/{ONEDRIVE_USER_EMAIL}/drive/items/{stories_folder['id']}/children"
-    stories_children = graph_get(stories_children_url, token)
-    return stories_children.get("value", [])
+    items = []
+    seen_ids = set()
+    for name in source_names:
+        folder = find_named_folder(project_children, name)
+        if not folder:
+            continue
+        url = f"https://graph.microsoft.com/v1.0/users/{ONEDRIVE_USER_EMAIL}/drive/items/{folder['id']}/children"
+        for item in graph_get(url, token).get("value", []):
+            if item.get("id") not in seen_ids:
+                seen_ids.add(item.get("id"))
+                items.append(item)
+    return items
 
 
 def download_file(token, file_id):
@@ -306,18 +321,24 @@ def archive_story_assets(token, selected_story, success=True):
 # Asset matching
 # =========================
 def match_story_assets(items):
+    # From the shared drop folder, Stories take only tall/vertical (9:16) media;
+    # feed-shaped files are left for the post publisher.
     matched = []
     for item in items:
         if "folder" in item:
             continue
 
         name = item.get("name", "")
-        if is_supported_media_file(name):
-            matched.append({
-                "base_name": os.path.splitext(name)[0],
-                "media": item,
-                "kind": get_media_kind(name),
-            })
+        if not is_supported_media_file(name):
+            continue
+        if not is_story_media(item):
+            continue
+
+        matched.append({
+            "base_name": os.path.splitext(name)[0],
+            "media": item,
+            "kind": get_media_kind(name),
+        })
 
     matched.sort(key=lambda x: x["base_name"])
     return matched
@@ -663,15 +684,17 @@ def main():
         items = get_stories_items(token)
         print(f"Found {len(items)} item(s) in stories/\n")
 
-        print("Step 3: Finding story image assets...")
+        print("Step 3: Finding vertical (9:16) story assets...")
         matched = match_story_assets(items)
 
         if not matched:
-            print("No valid story image assets found. Exit gracefully.")
+            print("No valid vertical story assets found. Exit gracefully.")
             sys.exit(0)
 
-        selected_story = matched[0]
+        # Pick at random rather than oldest-first, for day-to-day variety.
+        selected_story = random.choice(matched)
         media_kind = selected_story["kind"]
+        print(f"{len(matched)} story asset(s) available; randomly selected one for variety.")
         print(f"Selected story: {selected_story['base_name']}")
         print(f"Media file: {selected_story['media']['name']} (kind: {media_kind})\n")
 
