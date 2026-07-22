@@ -15,6 +15,7 @@ on:
           - email_test
           - token_check
           - cleanup
+          - generate
   schedule:
     - cron: "10 23 * * *"
     - cron: "10 3 * * *"
@@ -153,6 +154,10 @@ jobs:
           FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
           FB_PUBLISH_ENABLED: ${{ secrets.FB_PUBLISH_ENABLED }}
           CLEANUP_RETENTION_DAYS: ${{ secrets.CLEANUP_RETENTION_DAYS }}
+          OPENAI_IMAGE_MODEL: ${{ secrets.OPENAI_IMAGE_MODEL }}
+          OPENAI_IMAGE_QUALITY: ${{ secrets.OPENAI_IMAGE_QUALITY }}
+          ONEDRIVE_DRAFTS_FOLDER_NAME: ${{ secrets.ONEDRIVE_DRAFTS_FOLDER_NAME }}
+          AD_TOPIC: ${{ secrets.AD_TOPIC }}
         run: |
           if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 3 * * 1" ]; then
             PUBLISHER_TYPE="token_check"
@@ -170,6 +175,8 @@ jobs:
             python token_maintenance.py
           elif [ "${PUBLISHER_TYPE}" = "cleanup" ]; then
             python cleanup.py
+          elif [ "${PUBLISHER_TYPE}" = "generate" ]; then
+            python ad_generator.py
           elif [ "${PUBLISHER_TYPE}" = "email_test" ]; then
             python send_test_alert.py
           elif [ "${PUBLISHER_TYPE}" = "health" ]; then
