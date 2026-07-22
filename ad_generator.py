@@ -1,9 +1,11 @@
 import base64
+import math
 import os
 import random
 import sys
 import time
 from datetime import datetime
+from io import BytesIO
 
 import requests
 from dotenv import load_dotenv
@@ -41,15 +43,22 @@ REQUIRED_ENV_VARS = ["OPENAI_API_KEY", "MS_TENANT_ID", "MS_CLIENT_ID", "MS_CLIEN
 CANVAS_W, CANVAS_H = 1080, 1350
 
 BG = (243, 236, 224)        # warm cream / ivory
-CARD = (236, 227, 213)      # slightly deeper cream for panels
+CARD = (233, 223, 208)      # slightly deeper cream for panels
 TEXT = (74, 56, 42)         # chocolate brown
+DARK = (38, 30, 24)         # near-black brown (headline contrast)
 MUTED = (128, 108, 88)      # soft warm brown
 GOLD = (176, 141, 87)       # bronze / gold accent
+DARKBAR = (54, 41, 31)      # deep brown trust bar
+LIGHT = (250, 246, 238)     # near-white for text on gold/dark
 
-FOOTER_LINES = [
-    "Annerley  ·  470 Ipswich Road      Fortitude Valley  ·  27 Brunswick Street",
-    "0410 415 415  ·  rebornaesthetics.com.au",
-]
+# Footer facts (two Brisbane clinic locations).
+FOOTER = {
+    "tagline": "TWO BRISBANE LOCATIONS",
+    "loc1": "Annerley  ·  69 Juliette Street QLD 4103",
+    "loc2": "Fortitude Valley  ·  27 Brunswick Street QLD 4006",
+    "contact": "0410 415 415   ·   reborn-aesthetics.com.au",
+}
+TRUST_BAR = "EXPERT THERAPISTS   ·   ADVANCED TECHNOLOGY   ·   MEDICAL GRADE TREATMENTS"
 
 # Common photographic direction shared by every hero prompt.
 BRAND_PHOTO_STYLE = (
@@ -63,51 +72,107 @@ BRAND_PHOTO_STYLE = (
 TOPICS = [
     {
         "key": "skin_needling",
-        "headline": "Rebuild Your Glow",
-        "subheadline": "Healthy skin. Visible results.",
-        "services": ["Skin Needling", "RF Skin Tightening", "Hydra Glow", "From $199"],
+        "headline_lines": ["Rebuild", "Your", "Glow"],
+        "subheadline": "Collagen-stimulating skin renewal for firmer, fresher skin.",
+        "tagline": "Healthy skin, visibly restored.",
+        "price": "FROM $199*",
+        "badge": ["PREMIUM", "CARE", "MEDICAL GRADE"],
+        "services": [
+            {"name": "Skin Needling", "desc": "Collagen induction therapy", "icon": "target"},
+            {"name": "RF Tightening", "desc": "Firmer, lifted skin", "icon": "lift"},
+            {"name": "Hydra Glow", "desc": "Deep hydration boost", "icon": "droplet"},
+            {"name": "LED Therapy", "desc": "Calm & rejuvenate", "icon": "glow"},
+        ],
         "scene": "a professional skin needling facial treatment on a treatment bed, gloved practitioner, medical yet serene",
     },
     {
         "key": "tattoo_removal",
-        "headline": "A Fresh Canvas",
-        "subheadline": "Advanced laser tattoo removal.",
-        "services": ["PicoWay Laser", "Tattoo Removal", "Pigmentation", "From $99"],
+        "headline_lines": ["A Fresh", "Clean", "Canvas"],
+        "subheadline": "Advanced laser tattoo removal, safely fading the past.",
+        "tagline": "Start again, beautifully.",
+        "price": "FROM $99*",
+        "badge": ["SAFE", "EFFECTIVE", "PROVEN RESULTS"],
+        "services": [
+            {"name": "PicoWay Laser", "desc": "Advanced pico technology", "icon": "target"},
+            {"name": "Tattoo Removal", "desc": "Gradual, safe fading", "icon": "sparkle"},
+            {"name": "Pigmentation", "desc": "Even, clear tone", "icon": "glow"},
+            {"name": "Skin Repair", "desc": "Soothe & restore", "icon": "leaf"},
+        ],
         "scene": "a modern laser treatment room with premium medical laser device, calm client resting",
     },
     {
         "key": "hifu",
-        "headline": "Lift, Naturally",
-        "subheadline": "Non-surgical skin tightening.",
-        "services": ["HIFU", "RF Skin Tightening", "Profhilo", "From $250"],
+        "headline_lines": ["Lift,", "Naturally", "Ageless"],
+        "subheadline": "Non-surgical skin tightening that lifts and contours.",
+        "tagline": "Turn back time, gently.",
+        "price": "FROM $250*",
+        "badge": ["PREMIUM", "CARE", "REAL RESULTS"],
+        "services": [
+            {"name": "HIFU", "desc": "Deep lifting energy", "icon": "lift"},
+            {"name": "RF Tightening", "desc": "Firm & sculpt", "icon": "wave"},
+            {"name": "Profhilo", "desc": "Skin bio-remodelling", "icon": "droplet"},
+            {"name": "Contouring", "desc": "Defined jawline", "icon": "target"},
+        ],
         "scene": "an elegant minimal clinic with subtle modern technology, relaxed facial treatment",
     },
     {
         "key": "facial",
-        "headline": "Glow Starts Here",
-        "subheadline": "Signature luxury facials.",
-        "services": ["Signature Facial", "Hydra Glow", "Oxygen Boost", "From $129"],
+        "headline_lines": ["Glow", "Starts", "Here"],
+        "subheadline": "Signature luxury facials tailored to your skin.",
+        "tagline": "A ritual, not a routine.",
+        "price": "FROM $129*",
+        "badge": ["SIGNATURE", "LUXURY", "FACIALS"],
+        "services": [
+            {"name": "Signature Facial", "desc": "Bespoke skin ritual", "icon": "sparkle"},
+            {"name": "Hydra Glow", "desc": "Deep hydration boost", "icon": "droplet"},
+            {"name": "Oxygen Boost", "desc": "Radiance & lift", "icon": "glow"},
+            {"name": "LED Therapy", "desc": "Calm & renew", "icon": "leaf"},
+        ],
         "scene": "a warm spa facial room with white towels, soft candles and relaxing light, gentle facial in progress",
     },
     {
         "key": "pigmentation",
-        "headline": "Clear, Even, Radiant",
-        "subheadline": "Target pigmentation and tone.",
-        "services": ["PicoWay Laser", "Carbon Laser", "Photofacial", "From $149"],
+        "headline_lines": ["Clear,", "Even,", "Radiant"],
+        "subheadline": "Target pigmentation and uneven tone at the source.",
+        "tagline": "Luminous, from within.",
+        "price": "FROM $149*",
+        "badge": ["ADVANCED", "LASER", "MEDICAL GRADE"],
+        "services": [
+            {"name": "PicoWay Laser", "desc": "Precision pigment care", "icon": "target"},
+            {"name": "Carbon Laser", "desc": "Bright, refined skin", "icon": "sparkle"},
+            {"name": "Photofacial", "desc": "Even skin tone", "icon": "glow"},
+            {"name": "Skin Boosters", "desc": "Hydrate & restore", "icon": "droplet"},
+        ],
         "scene": "a bright fresh modern clinic, professional laser pigmentation treatment, glowing skin",
     },
     {
         "key": "anti_wrinkle",
-        "headline": "Refined, Not Frozen",
-        "subheadline": "Subtle anti-wrinkle artistry.",
-        "services": ["Anti Wrinkle", "Dermal Fillers", "Skin Boosters", "From $179"],
+        "headline_lines": ["Refined,", "Not", "Frozen"],
+        "subheadline": "Subtle anti-wrinkle artistry that still looks like you.",
+        "tagline": "Naturally, effortlessly you.",
+        "price": "FROM $179*",
+        "badge": ["EXPERT", "INJECTORS", "REAL RESULTS"],
+        "services": [
+            {"name": "Anti Wrinkle", "desc": "Soften fine lines", "icon": "sparkle"},
+            {"name": "Dermal Fillers", "desc": "Restore volume", "icon": "droplet"},
+            {"name": "Skin Boosters", "desc": "Glass-skin glow", "icon": "glow"},
+            {"name": "Bio-Remodel", "desc": "Firm & smooth", "icon": "lift"},
+        ],
         "scene": "an elegant consultation room, refined injectable treatment moment, tasteful and clinical",
     },
     {
         "key": "massage",
-        "headline": "Slow Down, Restore",
-        "subheadline": "Luxury remedial massage.",
-        "services": ["Remedial Massage", "Warm Stone", "Body Contouring", "From $99"],
+        "headline_lines": ["Slow", "Down,", "Restore"],
+        "subheadline": "Luxury remedial massage to release and renew.",
+        "tagline": "Rest is a treatment too.",
+        "price": "FROM $99*",
+        "badge": ["RELAX", "RESTORE", "RENEW"],
+        "services": [
+            {"name": "Remedial Massage", "desc": "Release deep tension", "icon": "wave"},
+            {"name": "Warm Stone", "desc": "Soothing heat therapy", "icon": "glow"},
+            {"name": "Body Contouring", "desc": "Sculpt & tone", "icon": "target"},
+            {"name": "Lymphatic", "desc": "Detox & de-puff", "icon": "leaf"},
+        ],
         "scene": "a luxury spa massage room with warm stones and natural light, deeply relaxing",
     },
 ]
@@ -128,14 +193,21 @@ def validate_env():
 FONT_DIR = os.path.join(os.getcwd(), ".fonts")
 _RAW = "https://raw.githubusercontent.com/google/fonts/main/"
 FONT_URLS = {
-    # Cormorant Garamond is a variable font; weight is selected per use.
+    # Cormorant Garamond variable fonts; weight is selected per use.
     "serif": _RAW + "ofl/cormorantgaramond/CormorantGaramond%5Bwght%5D.ttf",
+    "serif_italic": _RAW + "ofl/cormorantgaramond/CormorantGaramond-Italic%5Bwght%5D.ttf",
     "sans_light": _RAW + "ofl/poppins/Poppins-Light.ttf",
     "sans_regular": _RAW + "ofl/poppins/Poppins-Regular.ttf",
     "sans_medium": _RAW + "ofl/poppins/Poppins-Medium.ttf",
+    "sans_semibold": _RAW + "ofl/poppins/Poppins-SemiBold.ttf",
 }
-# Serif logical name -> variable font weight axis value.
-SERIF_WEIGHTS = {"serif_regular": 500, "serif_medium": 600}
+# Serif logical name -> (base font key, variable weight axis value).
+SERIF_WEIGHTS = {
+    "serif_regular": ("serif", 500),
+    "serif_medium": ("serif", 600),
+    "serif_bold": ("serif", 700),
+    "serif_italic": ("serif_italic", 500),
+}
 _FONT_FALLBACKS = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -160,12 +232,13 @@ def _ensure_font(name):
 
 def font(key, size):
     if key in SERIF_WEIGHTS:
-        path = _ensure_font("serif")
+        base, weight = SERIF_WEIGHTS[key]
+        path = _ensure_font(base)
         if path:
             try:
                 fnt = ImageFont.truetype(path, size)
                 try:
-                    fnt.set_variation_by_axes([SERIF_WEIGHTS[key]])
+                    fnt.set_variation_by_axes([weight])
                 except Exception:
                     pass
                 return fnt
@@ -203,9 +276,9 @@ def draw_tracked(draw, x, y, text, fnt, fill, tracking=0):
         x += draw.textlength(ch, font=fnt) + tracking
 
 
-def draw_center(draw, y, text, fnt, fill, tracking=0):
+def draw_center_x(draw, cx, y, text, fnt, fill, tracking=0):
     w = text_width(draw, text, fnt, tracking)
-    draw_tracked(draw, (CANVAS_W - w) / 2, y, text, fnt, fill, tracking)
+    draw_tracked(draw, cx - w / 2, y, text, fnt, fill, tracking)
 
 
 def wrap_lines(draw, text, fnt, max_w, tracking=0):
@@ -239,12 +312,77 @@ def fit_cover(img, w, h):
     return img.crop((left, top, left + w, top + h))
 
 
-def rounded(img, radius):
-    mask = Image.new("L", img.size, 0)
-    ImageDraw.Draw(mask).rounded_rectangle([0, 0, img.width, img.height], radius=radius, fill=255)
-    out = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    out.paste(img, (0, 0), mask)
-    return out
+# =========================
+# Line-art icons (drawn centered at cx, cy within radius r)
+# =========================
+def _icon_glow(draw, cx, cy, r, c, w):
+    draw.ellipse([cx - r * 0.3, cy - r * 0.3, cx + r * 0.3, cy + r * 0.3], outline=c, width=w)
+    for i in range(8):
+        a = math.radians(i * 45)
+        draw.line(
+            [(cx + math.cos(a) * r * 0.5, cy + math.sin(a) * r * 0.5),
+             (cx + math.cos(a) * r * 0.95, cy + math.sin(a) * r * 0.95)],
+            fill=c, width=w,
+        )
+
+
+def _icon_droplet(draw, cx, cy, r, c, w):
+    top = (cx, cy - r)
+    draw.line([top, (cx - r * 0.66, cy + r * 0.08)], fill=c, width=w)
+    draw.line([top, (cx + r * 0.66, cy + r * 0.08)], fill=c, width=w)
+    draw.arc([cx - r * 0.66, cy - r * 0.55, cx + r * 0.66, cy + r * 0.9], start=0, end=180, fill=c, width=w)
+
+
+def _icon_sparkle(draw, cx, cy, r, c, w):
+    pts = []
+    for i in range(8):
+        a = math.radians(i * 45 - 90)
+        rad = r if i % 2 == 0 else r * 0.4
+        pts.append((cx + math.cos(a) * rad, cy + math.sin(a) * rad))
+    draw.polygon(pts, outline=c, width=w)
+
+
+def _icon_wave(draw, cx, cy, r, c, w):
+    for off in (-r * 0.42, 0, r * 0.42):
+        pts = []
+        for t in range(0, 41):
+            x = cx - r + (2 * r) * t / 40
+            y = cy + off + math.sin(t / 40 * 2 * math.pi) * r * 0.22
+            pts.append((x, y))
+        draw.line(pts, fill=c, width=w, joint="curve")
+
+
+def _icon_lift(draw, cx, cy, r, c, w):
+    draw.line([(cx, cy + r * 0.75), (cx, cy - r * 0.55)], fill=c, width=w)
+    draw.line([(cx - r * 0.55, cy - r * 0.02), (cx, cy - r * 0.62)], fill=c, width=w)
+    draw.line([(cx + r * 0.55, cy - r * 0.02), (cx, cy - r * 0.62)], fill=c, width=w)
+
+
+def _icon_target(draw, cx, cy, r, c, w):
+    draw.ellipse([cx - r * 0.85, cy - r * 0.85, cx + r * 0.85, cy + r * 0.85], outline=c, width=w)
+    draw.ellipse([cx - r * 0.4, cy - r * 0.4, cx + r * 0.4, cy + r * 0.4], outline=c, width=w)
+    draw.ellipse([cx - 2, cy - 2, cx + 2, cy + 2], fill=c)
+
+
+def _icon_leaf(draw, cx, cy, r, c, w):
+    draw.arc([cx - r * 0.9, cy - r, cx + r * 0.5, cy + r], start=270, end=90, fill=c, width=w)
+    draw.arc([cx - r * 0.5, cy - r, cx + r * 0.9, cy + r], start=90, end=270, fill=c, width=w)
+    draw.line([(cx, cy - r * 0.8), (cx, cy + r * 0.8)], fill=c, width=w)
+
+
+ICONS = {
+    "glow": _icon_glow,
+    "droplet": _icon_droplet,
+    "sparkle": _icon_sparkle,
+    "wave": _icon_wave,
+    "lift": _icon_lift,
+    "target": _icon_target,
+    "leaf": _icon_leaf,
+}
+
+
+def _diamond(draw, cx, cy, r, c):
+    draw.polygon([(cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)], fill=c)
 
 
 # =========================
@@ -254,65 +392,122 @@ def compose_ad(hero_bytes, topic):
     canvas = Image.new("RGB", (CANVAS_W, CANVAS_H), BG)
     draw = ImageDraw.Draw(canvas)
 
-    # --- Wordmark ---
-    draw_center(draw, 84, "REBORN", font("serif_medium", 60), TEXT, tracking=14)
-    draw_center(draw, 158, "AESTHETICS", font("sans_light", 22), MUTED, tracking=10)
-    draw.line([(CANVAS_W / 2 - 34, 208), (CANVAS_W / 2 + 34, 208)], fill=GOLD, width=2)
+    HERO_X = 560           # left edge of the hero column
+    HERO_BOTTOM = 792      # hero photo extends from the top to here
+    LM = 74                # left content margin
 
-    # --- Headline ---
-    headline_font = font("serif_medium", 76)
-    lines = wrap_lines(draw, topic["headline"], headline_font, CANVAS_W - 200)
-    y = 244
-    for line in lines:
-        draw_center(draw, y, line, headline_font, TEXT, tracking=1)
-        y += 78
-    draw_center(draw, y + 6, topic["subheadline"], font("sans_light", 27), MUTED, tracking=2)
+    # --- Hero photo (full-bleed, right column) ---
+    hero = Image.open(BytesIO(hero_bytes)).convert("RGB")
+    hero = fit_cover(hero, CANVAS_W - HERO_X, HERO_BOTTOM)
+    canvas.paste(hero, (HERO_X, 0))
+    # Soft cream gradient on the hero's left edge so the seam reads as intentional.
+    seam = Image.new("L", (90, HERO_BOTTOM), 0)
+    for x in range(90):
+        for_alpha = int(210 * (1 - x / 90))
+        seam.paste(for_alpha, (x, 0, x + 1, HERO_BOTTOM))
+    overlay = Image.new("RGB", (90, HERO_BOTTOM), BG)
+    canvas.paste(overlay, (HERO_X, 0), seam)
 
-    # --- Hero image ---
-    hero_x, hero_w = 96, CANVAS_W - 192
-    hero_y, hero_h = 430, 560
-    hero = Image.open(_bytes_io(hero_bytes)).convert("RGB")
-    hero = fit_cover(hero, hero_w, hero_h)
-    canvas.paste(rounded(hero, 20), (hero_x, hero_y), rounded(hero, 20))
+    # --- Wordmark (top-left) ---
+    draw_tracked(draw, LM, 70, "REBORN", font("serif_bold", 46), TEXT, tracking=8)
+    draw_tracked(draw, LM + 2, 128, "AESTHETICS", font("sans_light", 15), MUTED, tracking=7)
+    draw.line([(LM + 2, 154), (LM + 96, 154)], fill=GOLD, width=2)
 
-    # --- Services line ---
-    services = "      ".join(topic["services"])
-    services_font = font("sans_regular", 25)
-    sy = hero_y + hero_h + 46
-    if text_width(draw, services, services_font, 1) <= CANVAS_W - 140:
-        draw_center(draw, sy, services, services_font, TEXT, tracking=1)
-        sy += 44
-    else:
-        half = (len(topic["services"]) + 1) // 2
-        for group in ("      ".join(topic["services"][:half]), "      ".join(topic["services"][half:])):
-            draw_center(draw, sy, group, services_font, TEXT, tracking=1)
-            sy += 40
-        sy += 4
+    # --- Headline (large serif, alternating brown / near-black) ---
+    hf = font("serif_medium", 82)
+    hy = 208
+    line_colors = [TEXT, DARK, GOLD]
+    for i, line in enumerate(topic["headline_lines"]):
+        draw_tracked(draw, LM, hy, line, hf, line_colors[i % len(line_colors)], tracking=1)
+        hy += 82
 
-    # --- Call to action ---
-    cta_font = font("sans_medium", 25)
-    cta_y = sy + 14
-    draw_center(draw, cta_y, "BOOK NOW", cta_font, GOLD, tracking=8)
-    cta_w = text_width(draw, "BOOK NOW", cta_font, 8)
-    draw.line(
-        [((CANVAS_W - cta_w) / 2, cta_y + 40), ((CANVAS_W + cta_w) / 2, cta_y + 40)],
-        fill=GOLD, width=2,
-    )
+    # --- Subheadline + italic tagline ---
+    sub_f = font("sans_light", 21)
+    sy = hy + 14
+    for line in wrap_lines(draw, topic["subheadline"], sub_f, HERO_X - LM - 30):
+        draw_tracked(draw, LM, sy, line, sub_f, MUTED, tracking=1)
+        sy += 30
+    draw_tracked(draw, LM, sy + 8, topic["tagline"], font("serif_italic", 30), GOLD, tracking=1)
+    sy += 8 + 44
+
+    # --- Price box ---
+    box_w, box_h = 292, 84
+    bx, by = LM, sy + 6
+    draw.rectangle([bx, by, bx + box_w, by + box_h], outline=GOLD, width=2)
+    draw_tracked(draw, bx + 20, by + 16, "FIRST VISIT SPECIAL", font("sans_semibold", 12), GOLD, tracking=3)
+    draw_tracked(draw, bx + 20, by + 38, topic["price"], font("serif_bold", 34), TEXT, tracking=1)
+
+    # --- Circular seal badge (overlapping the seam, top-right) ---
+    _draw_badge(draw, HERO_X + 6, 150, 74, topic["badge"])
+
+    # --- Service row (four line-art icon columns) ---
+    band_y = 838
+    draw.line([(LM, band_y - 24), (CANVAS_W - LM, band_y - 24)], fill=(212, 200, 182), width=1)
+    centers = [175, 410, 670, 905]
+    for cx, service in zip(centers, topic["services"]):
+        _draw_service(draw, cx, band_y, service)
+
+    # --- CTA button (filled gold) ---
+    _draw_button(draw, CANVAS_W / 2, 1076, 320, 62, "BOOK NOW")
 
     # --- Footer ---
-    fy = CANVAS_H - 96
-    footer_font = font("sans_light", 18)
-    for line in FOOTER_LINES:
-        draw_center(draw, fy, line, footer_font, MUTED, tracking=1)
-        fy += 30
+    draw_center_x(draw, CANVAS_W / 2, 1150, FOOTER["tagline"], font("sans_semibold", 14), GOLD, tracking=5)
+    draw_center_x(draw, CANVAS_W / 2, 1180, FOOTER["loc1"], font("sans_light", 17), TEXT, tracking=1)
+    draw_center_x(draw, CANVAS_W / 2, 1208, FOOTER["loc2"], font("sans_light", 17), TEXT, tracking=1)
+    draw_center_x(draw, CANVAS_W / 2, 1238, FOOTER["contact"], font("sans_regular", 17), TEXT, tracking=1)
+
+    # --- Dark trust bar ---
+    draw.rectangle([0, 1278, CANVAS_W, CANVAS_H], fill=DARKBAR)
+    draw_center_x(draw, CANVAS_W / 2, 1306, TRUST_BAR, font("sans_light", 14), LIGHT, tracking=2)
 
     return canvas
 
 
-def _bytes_io(data):
-    from io import BytesIO
+def _fit_font(draw, text, keys_sizes, max_w, tracking):
+    # Return the first (key, size) whose rendered width fits max_w, shrinking
+    # the size down if needed so long words never spill past the ring.
+    key, size = keys_sizes
+    while size > 8:
+        fnt = font(key, size)
+        if text_width(draw, text, fnt, tracking) <= max_w:
+            return fnt
+        size -= 1
+    return font(key, 8)
 
-    return BytesIO(data)
+
+def _draw_badge(draw, cx, cy, r, lines):
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=BG, outline=GOLD, width=3)
+    draw.ellipse([cx - r + 9, cy - r + 9, cx + r - 9, cy + r - 9], outline=GOLD, width=1)
+    _icon_sparkle(draw, cx, cy - r + 30, 9, GOLD, 2)
+    specs = [("sans_semibold", 15), ("serif_medium", 20), ("sans_semibold", 12)]
+    ys = [cy - 16, cy + 2, cy + 30]
+    max_w = 2 * (r - 15)
+    for line, spec, y in zip(lines, specs, ys):
+        fnt = _fit_font(draw, line, spec, max_w, tracking=2)
+        draw_center_x(draw, cx, y, line, fnt, TEXT, tracking=2)
+
+
+def _draw_service(draw, cx, top_y, service):
+    r = 33
+    cy = top_y + r
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=GOLD, width=1)
+    ICONS.get(service["icon"], _icon_sparkle)(draw, cx, cy, r * 0.52, TEXT, 3)
+    draw_center_x(draw, cx, cy + r + 16, service["name"], font("sans_semibold", 18), TEXT, tracking=1)
+    dy = cy + r + 42
+    for line in wrap_lines(draw, service["desc"], font("sans_light", 14), 220):
+        draw_center_x(draw, cx, dy, line, font("sans_light", 14), MUTED)
+        dy += 20
+
+
+def _draw_button(draw, cx, cy, w, h, label):
+    x0, y0 = cx - w / 2, cy - h / 2
+    draw.rounded_rectangle([x0, y0, x0 + w, y0 + h], radius=h / 2, fill=GOLD)
+    lf = font("sans_semibold", 22)
+    lw = text_width(draw, label, lf, 4)
+    block = lw + 30
+    tx = cx - block / 2
+    _diamond(draw, tx + 8, cy + 1, 7, LIGHT)
+    draw_tracked(draw, tx + 30, cy - 15, label, lf, LIGHT, tracking=4)
 
 
 # =========================
@@ -321,7 +516,8 @@ def _bytes_io(data):
 def build_hero_prompt(topic):
     return (
         f"A vertical editorial photograph for a premium aesthetics clinic. Scene: {topic['scene']}. "
-        f"{BRAND_PHOTO_STYLE}. Leave calm negative space, framed for a portrait social media hero image."
+        f"{BRAND_PHOTO_STYLE}. Leave calm negative space, framed for a tall portrait crop where the "
+        f"subject sits on the right side of the frame."
     )
 
 
@@ -417,7 +613,7 @@ def main():
     try:
         validate_env()
         topic = pick_topic()
-        print(f"Selected topic: {topic['key']} - {topic['headline']}")
+        print(f"Selected topic: {topic['key']} - {' '.join(topic['headline_lines'])}")
 
         print("Step 1: Generating hero image with OpenAI...")
         hero_bytes = generate_hero(topic)
@@ -425,7 +621,6 @@ def main():
 
         print("Step 2: Composing branded ad...")
         ad = compose_ad(hero_bytes, topic)
-        from io import BytesIO
 
         buffer = BytesIO()
         ad.save(buffer, format="JPEG", quality=92)
