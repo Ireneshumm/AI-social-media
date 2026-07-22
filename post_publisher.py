@@ -361,13 +361,24 @@ def parse_post_text(text_content):
     return image_url, brief
 
 
-# Fixed booking call-to-action appended to every post caption, so every post
-# consistently directs people to book online. The AI writes only the body and
-# hashtags (no CTA of its own) to avoid conflicting or duplicate instructions.
-BOOKING_CTA = (
+# Fixed footer appended to every post caption: booking CTA, contact details,
+# clinic locations and the standard hashtag set. The AI writes only the body
+# (no CTA, contact, or hashtags of its own) so this block is always consistent.
+CAPTION_FOOTER = (
     "All bookings are made online at https://www.rebornaesthetics.com.au/ — just click "
     "“Book Now”. If you’re unsure which treatment suits you, book a complimentary "
-    "consultation for a personalised plan."
+    "consultation for a personalised plan.\n\n"
+    "📞 0410 415 415\n"
+    "📧 info@rebornaesthetics.com.au\n"
+    "🌐 www.rebornaesthetics.com.au\n\n"
+    "📍 Annerley — 69 Juliette Street\n"
+    "📍 Fortitude Valley — 27 Brunswick Street\n\n"
+    "#brisbane #brisbanebusiness #brisbanemums #brisbanephotographer "
+    "#brisbanebeauty #brisbanesalon #brisbaneskin #brisbanebeautyclinic "
+    "#brisbanefacials #brisbanecosmeticclinic #brisbaneaesthetics "
+    "#picosurelaser #picowaylaser #skinneedlingbrisbane "
+    "#hifubrisbane #iplhairremovalbrisbane #acnescarsbrisbane "
+    "#brisbanebeautybloggers #brisbanemakeupartist #australianbeautyclinic"
 )
 
 
@@ -386,8 +397,7 @@ Requirements:
 - Tone: premium, warm, professional
 - Length: short to medium
 - Make it suitable for an Instagram post
-- Do NOT include any call to action, booking instructions, links, phone numbers, or "book now" wording (a fixed booking line is added automatically after your text)
-- Add 3 to 5 relevant hashtags
+- Write ONLY the caption body. Do NOT include hashtags, any call to action, booking instructions, links, phone numbers, email, or address (a fixed footer with all of that is added automatically after your text)
 - No medical claims and no guaranteed results
 """
         content = [{"type": "input_text", "text": prompt}]
@@ -405,8 +415,7 @@ Requirements:
 - Tone: premium, warm, professional
 - Length: short to medium
 - Make it suitable for an Instagram post
-- Do NOT include any call to action, booking instructions, links, phone numbers, or "book now" wording (a fixed booking line is added automatically after your text)
-- Add 3 to 5 relevant hashtags
+- Write ONLY the caption body. Do NOT include hashtags, any call to action, booking instructions, links, phone numbers, email, or address (a fixed footer with all of that is added automatically after your text)
 - No medical claims and no guaranteed results
 """
         model_input = prompt
