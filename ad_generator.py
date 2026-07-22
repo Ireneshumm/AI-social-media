@@ -56,7 +56,7 @@ FOOTER = {
     "tagline": "TWO BRISBANE LOCATIONS",
     "loc1": "Annerley  ·  69 Juliette Street QLD 4103",
     "loc2": "Fortitude Valley  ·  27 Brunswick Street QLD 4006",
-    "contact": "0410 415 415   ·   reborn-aesthetics.com.au",
+    "contact": "0410 415 415   ·   rebornaesthetics.com.au",
 }
 TRUST_BAR = "EXPERT THERAPISTS   ·   ADVANCED TECHNOLOGY   ·   MEDICAL GRADE TREATMENTS"
 
