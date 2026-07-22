@@ -57,8 +57,7 @@ def is_vertical_item(item, threshold=1.5):
     """Route media by shape from a single folder.
 
     Returns True for a tall/story shape (9:16 ≈ 1.78), False for a feed shape
-    (1:1, 4:5 ≈ 1.25, landscape), and None when dimensions are unavailable.
-    Callers treat None as feed so every file is claimed by exactly one channel."""
+    (1:1, 4:5 ≈ 1.25, landscape), and None when dimensions are unavailable."""
     dims = get_item_dimensions(item)
     if not dims:
         return None
@@ -66,6 +65,20 @@ def is_vertical_item(item, threshold=1.5):
     if width <= 0:
         return None
     return (height / width) >= threshold
+
+
+def is_story_media(item):
+    """Decide whether an item belongs to Stories (vertical) or the feed.
+
+    Primary signal is the aspect ratio. When OneDrive returns no dimensions,
+    fall back to the generator's filename marker ("_story_"); anything else
+    defaults to feed. Always returns a bool so the story/feed split is exclusive
+    and total — every file is claimed by exactly one channel."""
+    vertical = is_vertical_item(item)
+    if vertical is not None:
+        return vertical
+    name = (item.get("name") or "").lower()
+    return "_story_" in name
 
 
 def filename_to_brief(filename):

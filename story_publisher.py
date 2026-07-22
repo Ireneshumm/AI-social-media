@@ -9,7 +9,7 @@ from msal import ConfidentialClientApplication
 from openai import OpenAI
 import random
 
-from asset_helpers import is_supported_media_file, get_media_kind, filename_to_brief, is_vertical_item
+from asset_helpers import is_supported_media_file, get_media_kind, filename_to_brief, is_story_media
 from wordpress_media import upload_media
 from alert_email import send_alert_safely
 from facebook_publish import publish_facebook_story, FB_PUBLISH_ENABLED
@@ -331,7 +331,7 @@ def match_story_assets(items):
         name = item.get("name", "")
         if not is_supported_media_file(name):
             continue
-        if is_vertical_item(item) is not True:
+        if not is_story_media(item):
             continue
 
         matched.append({
