@@ -79,9 +79,11 @@ TRUST_BAR = "EXPERT THERAPISTS   ·   ADVANCED TECHNOLOGY   ·   MEDICAL GRADE T
 BRAND_PHOTO_STYLE = (
     "premium medical aesthetics clinic, luxury day spa atmosphere, calm Australian woman "
     "aged 25 to 40 with natural healthy skin and a relaxed expression, eyes gently closed, "
-    "no posing, no looking at camera, warm cream ivory and beige tones, soft golden window "
-    "light, minimal elegant interior, editorial fashion photography, tasteful and understated, "
-    "Aesop and Jo Malone campaign mood, photorealistic, no text, no logo, no watermark"
+    "no posing, no looking at camera, fully clothed in a clean white spa robe or clinic gown, "
+    "modest, professional and strictly non-sexual clinical wellness context, warm cream ivory "
+    "and beige tones, soft golden window light, minimal elegant interior, editorial fashion "
+    "photography, tasteful and understated, Aesop and Jo Malone campaign mood, photorealistic, "
+    "no text, no logo, no watermark"
 )
 
 DEVICE_PHOTO_STYLE = (
@@ -676,12 +678,19 @@ def compose(hero_bytes, topic, layout):
 # =========================
 # OpenAI hero image
 # =========================
+# Topics whose "relaxed person" scene risks tripping image moderation (e.g. a
+# person on a massage table) lean toward device/technology shots instead.
+_DEVICE_LEANING = {"massage", "body_contouring"}
+
+
 def pick_photo_mode(topic):
     # AD_PHOTO can pin "person" or "device"; otherwise pick at random, biased
     # slightly toward people. Device shots showcase the clinic's technology.
     mode = (os.getenv("AD_PHOTO") or "").strip().lower()
     if mode in ("person", "device"):
         return mode
+    if topic["key"] in _DEVICE_LEANING:
+        return random.choice(["device", "device", "person"])
     return random.choice(["person", "person", "device"])
 
 
@@ -700,24 +709,30 @@ def build_hero_prompt(topic, mode):
 
 
 def generate_hero(topic, mode):
+    """Generate a hero photo, returning (image_bytes, mode_used).
+
+    If a person prompt is rejected by image moderation, the final attempt falls
+    back to the device scene (no people), which reliably passes — so an
+    unattended run still produces an image instead of losing the post."""
     client = OpenAI(api_key=OPENAI_API_KEY)
-    prompt = build_hero_prompt(topic, mode)
+    # Last attempt forces device mode as a safe, people-free fallback.
+    attempt_modes = [mode, mode, "device"]
 
     last_error = None
-    for attempt in range(1, 4):
+    for attempt, m in enumerate(attempt_modes, 1):
         try:
             result = client.images.generate(
                 model=IMAGE_MODEL,
-                prompt=prompt,
+                prompt=build_hero_prompt(topic, m),
                 size="1024x1536",
                 quality=IMAGE_QUALITY,
                 n=1,
             )
-            return base64.b64decode(result.data[0].b64_json)
+            return base64.b64decode(result.data[0].b64_json), m
         except Exception as e:
             last_error = e
-            print(f"WARNING: hero image generation attempt {attempt} failed: {e}")
-            if attempt < 3:
+            print(f"WARNING: hero generation attempt {attempt} (mode={m}) failed: {e}")
+            if attempt < len(attempt_modes):
                 time.sleep([5, 10][attempt - 1])
     raise last_error
 
@@ -840,10 +855,10 @@ def main():
             layouts = ["campaign", "hero"] if layout == "both" else [layout]
             print(f"\n[{i + 1}/{count}] topic={topic['key']} | layout={layout} | photo={mode}")
 
-            hero_bytes = generate_hero(topic, mode)
-            print(f"  hero generated ({len(hero_bytes)} bytes)")
+            hero_bytes, used_mode = generate_hero(topic, mode)
+            print(f"  hero generated ({len(hero_bytes)} bytes, photo={used_mode})")
             for lay in layouts:
-                made.append(build_and_upload(hero_bytes, topic, lay, mode, token, folder_id, target))
+                made.append(build_and_upload(hero_bytes, topic, lay, used_mode, token, folder_id, target))
 
         print(f"\nDone. Uploaded {len(made)} image(s) to '{target}'.")
         sys.exit(0)
