@@ -202,3 +202,11 @@ jobs:
           else
             python post_publisher.py
           fi
+
+      - name: Upload generated ads (if any)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-ads
+          path: out/*.jpg
+          if-no-files-found: ignore

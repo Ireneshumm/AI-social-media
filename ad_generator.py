@@ -692,6 +692,15 @@ def build_and_upload(hero_bytes, topic, layout, token, folder_id):
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"{topic['key']}_{layout}_{timestamp}.jpg"
+
+    # Keep a local copy too, so CI can expose the render as an artifact for review.
+    try:
+        os.makedirs("out", exist_ok=True)
+        with open(os.path.join("out", filename), "wb") as f:
+            f.write(ad_bytes)
+    except Exception as e:
+        print(f"WARNING: could not write local copy: {e}")
+
     upload_draft(token, folder_id, filename, ad_bytes)
     print(f"Draft uploaded ({layout}, {len(ad_bytes)} bytes): {ONEDRIVE_DRAFTS_FOLDER_NAME}/{filename}")
     return filename
