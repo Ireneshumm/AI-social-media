@@ -60,13 +60,21 @@ FOOTER = {
 }
 TRUST_BAR = "EXPERT THERAPISTS   ·   ADVANCED TECHNOLOGY   ·   MEDICAL GRADE TREATMENTS"
 
-# Common photographic direction shared by every hero prompt.
+# Photographic direction. Two moods: a calm treatment/person shot, and a
+# device / technology close-up so the feed also showcases the clinic's gear.
 BRAND_PHOTO_STYLE = (
     "premium medical aesthetics clinic, luxury day spa atmosphere, calm Australian woman "
     "aged 25 to 40 with natural healthy skin and a relaxed expression, eyes gently closed, "
     "no posing, no looking at camera, warm cream ivory and beige tones, soft golden window "
     "light, minimal elegant interior, editorial fashion photography, tasteful and understated, "
     "Aesop and Jo Malone campaign mood, photorealistic, no text, no logo, no watermark"
+)
+
+DEVICE_PHOTO_STYLE = (
+    "elegant close-up product photography of a premium medical aesthetics device, sleek modern "
+    "clinical technology with a treatment handpiece, on a clean minimal bench in a luxury clinic, "
+    "warm cream ivory and beige tones, soft golden light, shallow depth of field, high-end brand "
+    "campaign look, Four Seasons spa mood, photorealistic, no text, no logo, no watermark, no people"
 )
 
 TOPICS = [
@@ -175,7 +183,83 @@ TOPICS = [
         ],
         "scene": "a luxury spa massage room with warm stones and natural light, deeply relaxing",
     },
+    {
+        "key": "laser",
+        "headline_lines": ["Precision,", "Perfected"],
+        "subheadline": "Medical-grade laser for skin, pigment and hair.",
+        "tagline": "Technology you can trust.",
+        "price": "FROM $89*",
+        "badge": ["MEDICAL", "GRADE", "TECHNOLOGY"],
+        "services": [
+            {"name": "PicoWay Laser", "desc": "Advanced pico power", "icon": "target"},
+            {"name": "Laser Hair", "desc": "Smooth, lasting results", "icon": "sparkle"},
+            {"name": "Fractional", "desc": "Resurface & renew", "icon": "glow"},
+            {"name": "Vascular", "desc": "Clear redness & veins", "icon": "wave"},
+        ],
+        "scene": "a modern laser suite, a calm client wearing protective eyewear during a laser session",
+    },
+    {
+        "key": "ipl",
+        "headline_lines": ["Even", "Every", "Tone"],
+        "subheadline": "IPL photofacials for clearer, brighter skin.",
+        "tagline": "Light that transforms.",
+        "price": "FROM $119*",
+        "badge": ["ADVANCED", "IPL", "TECHNOLOGY"],
+        "services": [
+            {"name": "IPL Photofacial", "desc": "Even skin tone", "icon": "glow"},
+            {"name": "Rosacea Care", "desc": "Calm redness", "icon": "leaf"},
+            {"name": "Sun Damage", "desc": "Fade pigment", "icon": "sparkle"},
+            {"name": "Skin Rejuven.", "desc": "Fresh, clear glow", "icon": "droplet"},
+        ],
+        "scene": "a bright modern clinic, IPL photofacial treatment on relaxed skin, gentle and clinical",
+    },
+    {
+        "key": "body_contouring",
+        "headline_lines": ["Sculpt", "&", "Define"],
+        "subheadline": "Non-invasive body contouring and fat reduction.",
+        "tagline": "Confidence, reshaped.",
+        "price": "FROM $149*",
+        "badge": ["ADVANCED", "BODY", "TECHNOLOGY"],
+        "services": [
+            {"name": "Fat Freezing", "desc": "Target stubborn fat", "icon": "target"},
+            {"name": "RF Contour", "desc": "Firm & tighten", "icon": "wave"},
+            {"name": "Cavitation", "desc": "Smooth & sculpt", "icon": "lift"},
+            {"name": "Lymphatic", "desc": "Detox & de-puff", "icon": "leaf"},
+        ],
+        "scene": "a sleek body-contouring treatment room with a modern device, calm client relaxing",
+    },
+    {
+        "key": "hydrafacial",
+        "headline_lines": ["The Deep", "Clean", "Glow"],
+        "subheadline": "Cleanse, extract and hydrate in one treatment.",
+        "tagline": "Skin, reset.",
+        "price": "FROM $139*",
+        "badge": ["SIGNATURE", "GLOW", "FACIAL"],
+        "services": [
+            {"name": "HydraFacial", "desc": "Deep cleanse & hydrate", "icon": "droplet"},
+            {"name": "Extraction", "desc": "Clear congestion", "icon": "sparkle"},
+            {"name": "Boosters", "desc": "Targeted serums", "icon": "glow"},
+            {"name": "LED Finish", "desc": "Calm & glow", "icon": "leaf"},
+        ],
+        "scene": "a HydraFacial treatment with a modern device wand gliding over glowing skin, serene clinic",
+    },
 ]
+
+# Per-topic device / technology scene, used when a generation renders the
+# machine-focused mood instead of a person. Falls back to a generic device shot.
+DEVICE_SCENES = {
+    "skin_needling": "a premium micro-needling / RF pen device resting on a clean clinical tray, handpiece in focus",
+    "tattoo_removal": "a premium pico laser tattoo-removal machine with handpiece, sleek control screen glowing softly",
+    "hifu": "a modern HIFU / ultrasound skin-tightening machine with handpiece and elegant control screen",
+    "facial": "a luxury facial steamer and serum bottles on a clean minimal clinic bench, elegant tools",
+    "pigmentation": "a pico / carbon laser device with handpiece, sleek dark panel and warm ambient light",
+    "anti_wrinkle": "elegant medical injectable vials and a fine needle on a sterile tray, refined and clinical",
+    "massage": "warm basalt massage stones, rolled towels and aromatherapy oils on a spa bench",
+    "laser": "a high-end aesthetic laser platform with handpiece and glowing touchscreen, dark sleek housing",
+    "ipl": "an IPL photofacial machine with handpiece and cooling tip, modern clinical technology",
+    "body_contouring": "a body-contouring / fat-freezing machine with applicators, sleek modern medical design",
+    "hydrafacial": "a HydraFacial machine with its spiral wand tip and serum vials, clean modern clinic bench",
+}
 
 
 # =========================
@@ -578,17 +662,32 @@ def compose(hero_bytes, topic, layout):
 # =========================
 # OpenAI hero image
 # =========================
-def build_hero_prompt(topic):
+def pick_photo_mode(topic):
+    # AD_PHOTO can pin "person" or "device"; otherwise pick at random, biased
+    # slightly toward people. Device shots showcase the clinic's technology.
+    mode = (os.getenv("AD_PHOTO") or "").strip().lower()
+    if mode in ("person", "device"):
+        return mode
+    return random.choice(["person", "person", "device"])
+
+
+def build_hero_prompt(topic, mode):
+    if mode == "device":
+        scene = DEVICE_SCENES.get(topic["key"], topic["scene"])
+        style = DEVICE_PHOTO_STYLE
+    else:
+        scene = topic["scene"]
+        style = BRAND_PHOTO_STYLE
     return (
-        f"A vertical editorial photograph for a premium aesthetics clinic. Scene: {topic['scene']}. "
-        f"{BRAND_PHOTO_STYLE}. Leave calm negative space, framed for a tall portrait crop where the "
-        f"subject sits on the right side of the frame."
+        f"A vertical editorial photograph for a premium aesthetics clinic. Scene: {scene}. "
+        f"{style}. Leave calm negative space, framed for a tall portrait crop where the main "
+        f"subject sits toward the right side of the frame."
     )
 
 
-def generate_hero(topic):
+def generate_hero(topic, mode):
     client = OpenAI(api_key=OPENAI_API_KEY)
-    prompt = build_hero_prompt(topic)
+    prompt = build_hero_prompt(topic, mode)
 
     last_error = None
     for attempt in range(1, 4):
@@ -711,11 +810,12 @@ def main():
         validate_env()
         topic = pick_topic()
         layout = pick_layout()
+        mode = pick_photo_mode(topic)
         layouts = ["campaign", "hero"] if layout == "both" else [layout]
-        print(f"Selected topic: {topic['key']} - {' '.join(topic['headline_lines'])} | layout: {layout}")
+        print(f"Selected topic: {topic['key']} - {' '.join(topic['headline_lines'])} | layout: {layout} | photo: {mode}")
 
         print("Step 1: Generating hero image with OpenAI...")
-        hero_bytes = generate_hero(topic)
+        hero_bytes = generate_hero(topic, mode)
         print(f"Hero image generated ({len(hero_bytes)} bytes).")
 
         print("Step 2: Composing + uploading to OneDrive drafts folder...")
