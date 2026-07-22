@@ -16,6 +16,8 @@ on:
           - token_check
           - cleanup
           - generate
+          - insights_check
+          - insights_report
       ad_layout:
         description: "Ad layout (generate only)"
         required: false
@@ -57,6 +59,7 @@ on:
     - cron: "30 15 * * 0"
     - cron: "30 22 * * *"
     - cron: "0 21 * * *"
+    - cron: "0 23 * * 1"
 
 permissions:
   contents: read
@@ -202,6 +205,8 @@ jobs:
             PUBLISHER_TYPE="token_check"
           elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "30 15 * * 0" ]; then
             PUBLISHER_TYPE="cleanup"
+          elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 23 * * 1" ]; then
+            PUBLISHER_TYPE="insights_report"
           elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "30 22 * * *" ]; then
             # Daily autonomous feed posts: generate 3 ads straight into the publish
             # queue so the 3 daily post crons have fresh content to post.
@@ -228,6 +233,10 @@ jobs:
 
           if [ "${PUBLISHER_TYPE}" = "token_check" ]; then
             python token_maintenance.py
+          elif [ "${PUBLISHER_TYPE}" = "insights_check" ]; then
+            python insights_check.py
+          elif [ "${PUBLISHER_TYPE}" = "insights_report" ]; then
+            python insights_report.py
           elif [ "${PUBLISHER_TYPE}" = "cleanup" ]; then
             python cleanup.py
           elif [ "${PUBLISHER_TYPE}" = "generate" ]; then
