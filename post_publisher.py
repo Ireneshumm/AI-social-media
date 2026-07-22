@@ -9,7 +9,14 @@ from msal import ConfidentialClientApplication
 from openai import OpenAI
 import random
 
-from asset_helpers import is_supported_media_file, get_media_kind, filename_to_brief, is_story_media
+from asset_helpers import (
+    is_supported_media_file,
+    get_media_kind,
+    filename_to_brief,
+    is_story_media,
+    recent_content_groups,
+    pick_with_variety,
+)
 from wordpress_media import upload_media
 from alert_email import send_alert_safely
 from facebook_publish import publish_facebook_post, FB_PUBLISH_ENABLED
@@ -671,11 +678,21 @@ def main():
             print("No valid feed post assets found. Exit gracefully.")
             sys.exit(0)
 
-        # Pick at random rather than oldest-first, so the feed rotates through
-        # different content day to day instead of draining in upload order.
-        selected_post = random.choice(matched)
+        # Steer away from the kinds of content most recently posted, then pick at
+        # random among the rest, so the feed rotates through different treatments
+        # instead of repeating the same theme or draining in upload order.
+        recent_groups = set()
+        try:
+            posted_sub = get_subfolder_by_path(token, ONEDRIVE_POSTED_FOLDER_NAME, ONEDRIVE_POSTS_FOLDER_NAME)
+            recent_groups = recent_content_groups(get_folder_children(token, posted_sub["id"]), n=2)
+        except Exception as e:
+            print(f"Variety history unavailable ({e}); selecting at random.")
+        selected_post = pick_with_variety(matched, recent_groups, random)
         media_kind = selected_post["kind"]
-        print(f"{len(matched)} feed asset(s) available; randomly selected one for variety.")
+        print(
+            f"{len(matched)} feed asset(s) available; avoided recent {sorted(recent_groups) or 'none'}; "
+            f"selected {selected_post['media']['name']}."
+        )
         print(f"Selected post: {selected_post['base_name']}")
         print(f"Media file: {selected_post['media']['name']} (kind: {media_kind})\n")
 
