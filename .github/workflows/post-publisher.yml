@@ -16,6 +16,21 @@ on:
           - token_check
           - cleanup
           - generate
+      ad_layout:
+        description: "Ad layout (generate only)"
+        required: false
+        default: random
+        type: choice
+        options:
+          - random
+          - campaign
+          - hero
+          - both
+      ad_topic:
+        description: "Ad topic key (generate only, blank = random)"
+        required: false
+        default: ""
+        type: string
   schedule:
     - cron: "10 23 * * *"
     - cron: "10 3 * * *"
@@ -157,7 +172,8 @@ jobs:
           OPENAI_IMAGE_MODEL: ${{ secrets.OPENAI_IMAGE_MODEL }}
           OPENAI_IMAGE_QUALITY: ${{ secrets.OPENAI_IMAGE_QUALITY }}
           ONEDRIVE_DRAFTS_FOLDER_NAME: ${{ secrets.ONEDRIVE_DRAFTS_FOLDER_NAME }}
-          AD_TOPIC: ${{ secrets.AD_TOPIC }}
+          AD_TOPIC: ${{ inputs.ad_topic || secrets.AD_TOPIC }}
+          AD_LAYOUT: ${{ inputs.ad_layout || secrets.AD_LAYOUT }}
         run: |
           if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 3 * * 1" ]; then
             PUBLISHER_TYPE="token_check"

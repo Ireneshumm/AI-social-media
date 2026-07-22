@@ -510,6 +510,71 @@ def _draw_button(draw, cx, cy, w, h, label):
     draw_tracked(draw, tx + 30, cy - 15, label, lf, LIGHT, tracking=4)
 
 
+def _scrim(canvas, box_h, at_bottom, color, max_alpha, power=1.5):
+    # A soft vertical gradient of `color` fading to transparent, so text stays
+    # legible over any hero photo.
+    grad = Image.new("L", (1, box_h), 0)
+    for y in range(box_h):
+        t = y / box_h
+        edge = t if at_bottom else (1 - t)
+        grad.putpixel((0, y), int(max_alpha * (edge ** power)))
+    grad = grad.resize((CANVAS_W, box_h))
+    layer = Image.new("RGB", (CANVAS_W, box_h), color)
+    y0 = CANVAS_H - box_h if at_bottom else 0
+    canvas.paste(layer, (0, y0), grad)
+
+
+# =========================
+# Composition B: photo-forward "big image" layout
+# =========================
+def compose_ad_hero(hero_bytes, topic):
+    hero = Image.open(BytesIO(hero_bytes)).convert("RGB")
+    canvas = fit_cover(hero, CANVAS_W, CANVAS_H).copy()
+
+    dark = (26, 18, 12)
+    _scrim(canvas, 760, True, dark, 220)     # bottom, for headline block
+    _scrim(canvas, 300, False, dark, 120)    # top, for wordmark
+    draw = ImageDraw.Draw(canvas, "RGBA")
+
+    cream = (236, 227, 213)
+
+    # --- Inset frame ---
+    m = 42
+    draw.rectangle([m, m, CANVAS_W - m, CANVAS_H - m], outline=(240, 232, 219, 150), width=2)
+
+    # --- Wordmark (top-center) ---
+    draw_center_x(draw, CANVAS_W / 2, 76, "REBORN", font("serif_medium", 46), LIGHT, tracking=12)
+    draw_center_x(draw, CANVAS_W / 2, 132, "AESTHETICS", font("sans_light", 15), cream, tracking=8)
+
+    # --- Bottom headline block (anchored near the base, built upward) ---
+    hf = font("serif_medium", 84)
+    lines = wrap_lines(draw, " ".join(topic["headline_lines"]), hf, CANVAS_W - 300)
+    end_y = 1108
+    hy = end_y - len(lines) * 84
+    for line in lines:
+        draw_center_x(draw, CANVAS_W / 2, hy, line, hf, LIGHT, tracking=1)
+        hy += 84
+
+    draw.line([(CANVAS_W / 2 - 38, end_y + 10), (CANVAS_W / 2 + 38, end_y + 10)], fill=GOLD, width=2)
+    draw_center_x(draw, CANVAS_W / 2, end_y + 26, topic["tagline"], font("serif_italic", 31), cream, tracking=1)
+
+    _draw_button(draw, CANVAS_W / 2, end_y + 108, 300, 60, "BOOK NOW")
+
+    draw_center_x(
+        draw, CANVAS_W / 2, CANVAS_H - 74,
+        f"{FOOTER['tagline']}   ·   {FOOTER['contact'].split('·')[-1].strip()}",
+        font("sans_light", 14), cream, tracking=2,
+    )
+
+    return canvas
+
+
+def compose(hero_bytes, topic, layout):
+    if layout == "hero":
+        return compose_ad_hero(hero_bytes, topic)
+    return compose_ad(hero_bytes, topic)
+
+
 # =========================
 # OpenAI hero image
 # =========================
@@ -609,33 +674,48 @@ def pick_topic():
     return random.choice(TOPICS)
 
 
+def pick_layout():
+    # AD_LAYOUT can pin a layout ("campaign" = info version A, "hero" = big-image
+    # version B, "both" = render both from one photo); anything else alternates
+    # at random so the feed gets variety.
+    layout = (os.getenv("AD_LAYOUT") or "").strip().lower()
+    if layout in ("campaign", "hero", "both"):
+        return layout
+    return random.choice(["campaign", "hero"])
+
+
+def build_and_upload(hero_bytes, topic, layout, token, folder_id):
+    ad = compose(hero_bytes, topic, layout)
+    buffer = BytesIO()
+    ad.save(buffer, format="JPEG", quality=92)
+    ad_bytes = buffer.getvalue()
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{topic['key']}_{layout}_{timestamp}.jpg"
+    upload_draft(token, folder_id, filename, ad_bytes)
+    print(f"Draft uploaded ({layout}, {len(ad_bytes)} bytes): {ONEDRIVE_DRAFTS_FOLDER_NAME}/{filename}")
+    return filename
+
+
 def main():
     try:
         validate_env()
         topic = pick_topic()
-        print(f"Selected topic: {topic['key']} - {' '.join(topic['headline_lines'])}")
+        layout = pick_layout()
+        layouts = ["campaign", "hero"] if layout == "both" else [layout]
+        print(f"Selected topic: {topic['key']} - {' '.join(topic['headline_lines'])} | layout: {layout}")
 
         print("Step 1: Generating hero image with OpenAI...")
         hero_bytes = generate_hero(topic)
         print(f"Hero image generated ({len(hero_bytes)} bytes).")
 
-        print("Step 2: Composing branded ad...")
-        ad = compose_ad(hero_bytes, topic)
-
-        buffer = BytesIO()
-        ad.save(buffer, format="JPEG", quality=92)
-        ad_bytes = buffer.getvalue()
-        print(f"Composed ad ({len(ad_bytes)} bytes, {CANVAS_W}x{CANVAS_H}).")
-
-        print("Step 3: Uploading to OneDrive drafts folder...")
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{topic['key']}_{timestamp}.jpg"
+        print("Step 2: Composing + uploading to OneDrive drafts folder...")
         token = get_access_token()
         folder_id = ensure_drafts_folder(token)
-        upload_draft(token, folder_id, filename, ad_bytes)
-        print(f"Draft uploaded: {ONEDRIVE_DRAFTS_FOLDER_NAME}/{filename}")
+        for lay in layouts:
+            build_and_upload(hero_bytes, topic, lay, token, folder_id)
 
-        print("\nAd draft created. Review it and move it into the posts folder to publish.")
+        print("\nAd draft(s) created. Review in the drafts folder and move into posts to publish.")
         sys.exit(0)
 
     except Exception as e:
