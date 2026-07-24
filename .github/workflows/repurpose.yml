@@ -1,0 +1,54 @@
+name: Reborn Repurpose (link to draft)
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: "TikTok or Instagram video URL (your own / rights-cleared content)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  repurpose:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install --upgrade yt-dlp
+
+      - name: Ensure ffmpeg
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -version | head -1
+
+      - name: Repurpose video into draft
+        env:
+          VIDEO_URL: ${{ inputs.video_url }}
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+          ONEDRIVE_ROOT_PATH: ${{ secrets.ONEDRIVE_ROOT_PATH }}
+          ONEDRIVE_DRAFTS_FOLDER_NAME: ${{ secrets.ONEDRIVE_DRAFTS_FOLDER_NAME }}
+          ONEDRIVE_USER_EMAIL: ${{ secrets.ONEDRIVE_USER_EMAIL }}
+          REPURPOSE_TARGET_FOLDER: ${{ secrets.REPURPOSE_TARGET_FOLDER }}
+        run: python repurpose.py
