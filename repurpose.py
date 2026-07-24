@@ -8,9 +8,9 @@ the draft and move it into the queue when happy. Only use this with your own
 content or content you have the rights to.
 
 Optional toggles (env, "true"/"false"):
-  REMOVE_SUBTITLES  approximate: blurs/interpolates over the bottom caption band
-                    (burned-in subtitles cannot be removed cleanly without GPU
-                    inpainting — this leaves a soft patch and is imperfect)
+  REMOVE_SUBTITLES  clean burned-in subtitle/text removal via the Replicate
+                    model hjunior29/video-text-remover (GPU inpainting).
+                    Requires REPLICATE_API_TOKEN.
   REMOVE_MUSIC      separate voice from music (Demucs) and keep only the voice
   MUTE_AUDIO        drop all audio (overrides REMOVE_MUSIC)
 """
@@ -105,33 +105,36 @@ def download_video(url):
 # =========================
 # Optional processing steps
 # =========================
-def video_dimensions(path):
-    out = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", path],
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    width, height = out.split("x")
-    return int(width), int(height)
-
-
 def remove_subtitles(path):
-    """APPROXIMATE burned-in caption removal: interpolate over the bottom band
-    where captions usually sit. This is not clean — it leaves a soft patch and
-    cannot recover the covered background. Clean removal needs GPU inpainting."""
-    width, height = video_dimensions(path)
-    # Bottom-centre caption band (best-effort; captions vary by video).
-    bx = max(2, int(width * 0.04) // 2 * 2)
-    bw = min(width - bx - 2, int(width * 0.92) // 2 * 2)
-    bh = int(height * 0.22) // 2 * 2
-    by = height - bh - 2
+    """Clean burned-in subtitle/text removal via the Replicate model
+    hjunior29/video-text-remover (auto text detection + GPU inpainting)."""
+    if not os.getenv("REPLICATE_API_TOKEN"):
+        raise RuntimeError("REMOVE_SUBTITLES is on but REPLICATE_API_TOKEN is not set.")
+
+    import replicate
+
+    print("Calling Replicate video-text-remover (this runs on a cloud GPU, may take a few minutes)...")
+    with open(path, "rb") as video_file:
+        output = replicate.run(
+            "hjunior29/video-text-remover",
+            input={"video": video_file, "method": "hybrid"},
+        )
+
     out = os.path.splitext(path)[0] + "_nosub.mp4"
-    print("NOTE: subtitle removal is approximate (soft patch over the caption band).")
-    run([
-        "ffmpeg", "-y", "-i", path,
-        "-vf", f"delogo=x={bx}:y={by}:w={bw}:h={bh}:show=0",
-        "-c:a", "copy", out,
-    ])
+    # The client may return a file-like object, a URL string, or a list of them.
+    if hasattr(output, "read"):
+        with open(out, "wb") as f:
+            f.write(output.read())
+    else:
+        if isinstance(output, (list, tuple)):
+            output = output[0]
+        url = getattr(output, "url", None) or str(output)
+        resp = requests.get(url, timeout=900)
+        resp.raise_for_status()
+        with open(out, "wb") as f:
+            f.write(resp.content)
+
+    print(f"Subtitle-removed video saved: {out} ({os.path.getsize(out)} bytes)")
     return out
 
 
@@ -243,7 +246,7 @@ def main():
         path = download_video(VIDEO_URL)
 
         if REMOVE_SUBTITLES:
-            print("\nStep 2a: Removing subtitles (approximate)...")
+            print("\nStep 2a: Removing subtitles (Replicate GPU inpainting)...")
             path = remove_subtitles(path)
 
         if MUTE_AUDIO:
