@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       remove_subtitles:
-        description: "Remove subtitles (approximate — soft patch, not clean)"
+        description: "Remove subtitles (clean, via Replicate GPU inpainting)"
         required: false
         default: false
         type: boolean
@@ -48,6 +48,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install --upgrade yt-dlp
+          pip install replicate
           # Demucs (with torch) is large, so only install it when music removal
           # is requested.
           if [ "${{ inputs.remove_music }}" = "true" ]; then
@@ -67,6 +68,7 @@ jobs:
           REMOVE_SUBTITLES: ${{ inputs.remove_subtitles }}
           REMOVE_MUSIC: ${{ inputs.remove_music }}
           MUTE_AUDIO: ${{ inputs.mute_audio }}
+          REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
           MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
           MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
