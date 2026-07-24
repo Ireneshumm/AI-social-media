@@ -1,10 +1,19 @@
 """Repurpose a TikTok / Instagram video into a ready-to-publish draft.
 
 Given a share URL, downloads the source without the on-screen watermark
-(yt-dlp), normalizes it to the publishing spec (1080x1920 H.264 via the existing
-transcoder), and uploads it to the OneDrive review folder ("drafts"). Nothing is
-published automatically — you review the draft and move it into the queue when
-happy. Only use this with your own content or content you have the rights to."""
+(yt-dlp), optionally removes burned-in subtitles / background music / all audio,
+normalizes it to the publishing spec (1080x1920 H.264), and uploads it to the
+OneDrive review folder ("drafts"). Nothing is published automatically — review
+the draft and move it into the queue when happy. Only use this with your own
+content or content you have the rights to.
+
+Optional toggles (env, "true"/"false"):
+  REMOVE_SUBTITLES  approximate: blurs/interpolates over the bottom caption band
+                    (burned-in subtitles cannot be removed cleanly without GPU
+                    inpainting — this leaves a soft patch and is imperfect)
+  REMOVE_MUSIC      separate voice from music (Demucs) and keep only the voice
+  MUTE_AUDIO        drop all audio (overrides REMOVE_MUSIC)
+"""
 import glob
 import os
 import subprocess
@@ -25,12 +34,20 @@ load_dotenv()
 # =========================
 VIDEO_URL = os.getenv("VIDEO_URL")
 
+
+def _flag(name):
+    return (os.getenv(name) or "").strip().lower() in ("true", "1", "yes", "on")
+
+
+REMOVE_SUBTITLES = _flag("REMOVE_SUBTITLES")
+REMOVE_MUSIC = _flag("REMOVE_MUSIC")
+MUTE_AUDIO = _flag("MUTE_AUDIO")
+
 MS_TENANT_ID = os.getenv("MS_TENANT_ID")
 MS_CLIENT_ID = os.getenv("MS_CLIENT_ID")
 MS_CLIENT_SECRET = os.getenv("MS_CLIENT_SECRET")
 
 ONEDRIVE_ROOT_PATH = os.getenv("ONEDRIVE_ROOT_PATH") or "IG Auto Publisher"
-# Land in the review folder by default; never straight into the publish queue.
 REVIEW_FOLDER_NAME = (
     os.getenv("REPURPOSE_TARGET_FOLDER")
     or os.getenv("ONEDRIVE_DRAFTS_FOLDER_NAME")
@@ -43,7 +60,6 @@ SCOPES = ["https://graph.microsoft.com/.default"]
 GRAPH_ROOT = f"https://graph.microsoft.com/v1.0/users/{ONEDRIVE_USER_EMAIL}"
 
 REQUIRED_ENV_VARS = ["VIDEO_URL", "MS_TENANT_ID", "MS_CLIENT_ID", "MS_CLIENT_SECRET"]
-
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm")
 
 
@@ -51,6 +67,11 @@ def validate_env():
     missing = [key for key in REQUIRED_ENV_VARS if not os.getenv(key)]
     if missing:
         raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
+
+
+def run(cmd):
+    print("+ " + " ".join(cmd))
+    subprocess.run(cmd, check=True)
 
 
 # =========================
@@ -65,17 +86,12 @@ def download_video(url):
             pass
 
     template = "dl/%(id)s.%(ext)s"
-    cmd = [
-        "yt-dlp",
-        "--no-playlist",
-        "--no-warnings",
+    run([
+        "yt-dlp", "--no-playlist", "--no-warnings",
         "-f", "mp4/bestvideo*+bestaudio/best",
         "--merge-output-format", "mp4",
-        "-o", template,
-        url,
-    ]
-    print("Downloading:", " ".join(cmd))
-    subprocess.run(cmd, check=True)
+        "-o", template, url,
+    ])
 
     videos = [f for f in glob.glob("dl/*") if f.lower().endswith(VIDEO_EXTS)]
     if not videos:
@@ -84,6 +100,61 @@ def download_video(url):
     chosen = videos[-1]
     print(f"Downloaded: {chosen} ({os.path.getsize(chosen)} bytes)")
     return chosen
+
+
+# =========================
+# Optional processing steps
+# =========================
+def video_dimensions(path):
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", path],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    width, height = out.split("x")
+    return int(width), int(height)
+
+
+def remove_subtitles(path):
+    """APPROXIMATE burned-in caption removal: interpolate over the bottom band
+    where captions usually sit. This is not clean — it leaves a soft patch and
+    cannot recover the covered background. Clean removal needs GPU inpainting."""
+    width, height = video_dimensions(path)
+    # Bottom-centre caption band (best-effort; captions vary by video).
+    bx = max(2, int(width * 0.04) // 2 * 2)
+    bw = min(width - bx - 2, int(width * 0.92) // 2 * 2)
+    bh = int(height * 0.22) // 2 * 2
+    by = height - bh - 2
+    out = os.path.splitext(path)[0] + "_nosub.mp4"
+    print("NOTE: subtitle removal is approximate (soft patch over the caption band).")
+    run([
+        "ffmpeg", "-y", "-i", path,
+        "-vf", f"delogo=x={bx}:y={by}:w={bw}:h={bh}:show=0",
+        "-c:a", "copy", out,
+    ])
+    return out
+
+
+def remove_background_music(path):
+    """Separate voice from music with Demucs and keep only the voice."""
+    run(["ffmpeg", "-y", "-i", path, "-vn", "-acodec", "pcm_s16le", "audio.wav"])
+    run(["python", "-m", "demucs", "--two-stems=vocals", "-o", "demucs_out", "audio.wav"])
+    vocals = glob.glob("demucs_out/**/vocals.wav", recursive=True)
+    if not vocals:
+        raise RuntimeError("Demucs did not produce a vocals track.")
+    out = os.path.splitext(path)[0] + "_novox.mp4"
+    run([
+        "ffmpeg", "-y", "-i", path, "-i", vocals[0],
+        "-map", "0:v:0", "-map", "1:a:0",
+        "-c:v", "copy", "-shortest", out,
+    ])
+    return out
+
+
+def mute_audio(path):
+    out = os.path.splitext(path)[0] + "_mute.mp4"
+    run(["ffmpeg", "-y", "-i", path, "-an", "-c:v", "copy", out])
+    return out
 
 
 # =========================
@@ -134,7 +205,6 @@ def ensure_review_folder(token):
 
 
 def upload_video(token, folder_id, filename, path):
-    # Resumable upload session handles large video files reliably.
     session = _graph(
         "POST",
         f"{GRAPH_ROOT}/drive/items/{folder_id}:/{filename}:/createUploadSession",
@@ -144,17 +214,17 @@ def upload_video(token, folder_id, filename, path):
     upload_url = session["uploadUrl"]
 
     size = os.path.getsize(path)
-    chunk = 10 * 1024 * 1024  # 10 MB
+    chunk = 10 * 1024 * 1024
     with open(path, "rb") as f:
         start = 0
         while start < size:
             data = f.read(chunk)
             end = start + len(data) - 1
-            headers = {
-                "Content-Length": str(len(data)),
-                "Content-Range": f"bytes {start}-{end}/{size}",
-            }
-            resp = requests.put(upload_url, headers=headers, data=data, timeout=300)
+            resp = requests.put(
+                upload_url,
+                headers={"Content-Length": str(len(data)), "Content-Range": f"bytes {start}-{end}/{size}"},
+                data=data, timeout=300,
+            )
             resp.raise_for_status()
             start = end + 1
     print(f"Uploaded to {REVIEW_FOLDER_NAME}/{filename} ({size} bytes)")
@@ -166,17 +236,29 @@ def upload_video(token, folder_id, filename, path):
 def main():
     try:
         validate_env()
-        print(f"Repurposing: {VIDEO_URL}\n")
+        print(f"Repurposing: {VIDEO_URL}")
+        print(f"Toggles -> subtitles:{REMOVE_SUBTITLES}  remove_music:{REMOVE_MUSIC}  mute:{MUTE_AUDIO}\n")
 
         print("Step 1: Downloading source (no watermark)...")
-        raw_path = download_video(VIDEO_URL)
+        path = download_video(VIDEO_URL)
 
-        print("\nStep 2: Normalizing to 1080x1920 H.264...")
-        final_path = ensure_h264(raw_path)
+        if REMOVE_SUBTITLES:
+            print("\nStep 2a: Removing subtitles (approximate)...")
+            path = remove_subtitles(path)
 
-        print("\nStep 3: Uploading to review folder...")
+        if MUTE_AUDIO:
+            print("\nStep 2b: Muting all audio...")
+            path = mute_audio(path)
+        elif REMOVE_MUSIC:
+            print("\nStep 2b: Removing background music (keeping voice)...")
+            path = remove_background_music(path)
+
+        print("\nStep 3: Normalizing to 1080x1920 H.264...")
+        final_path = ensure_h264(path)
+
+        print("\nStep 4: Uploading to review folder...")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base = os.path.splitext(os.path.basename(raw_path))[0]
+        base = os.path.splitext(os.path.basename(path))[0]
         filename = f"repost_{base}_{timestamp}.mp4"
         token = get_access_token()
         folder_id = ensure_review_folder(token)
@@ -186,8 +268,8 @@ def main():
         sys.exit(0)
 
     except subprocess.CalledProcessError as e:
-        print("\nERROR: download failed:", e)
-        print("The link may be private, region-locked, or need login (Instagram often does).")
+        print("\nERROR: a processing step failed:", e)
+        print("If it was the download, the link may be private/region-locked or need login (Instagram often does).")
         sys.exit(1)
     except Exception as e:
         print("\nERROR:", str(e))

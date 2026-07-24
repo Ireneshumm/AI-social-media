@@ -7,6 +7,21 @@ on:
         description: "TikTok or Instagram video URL (your own / rights-cleared content)"
         required: true
         type: string
+      remove_subtitles:
+        description: "Remove subtitles (approximate — soft patch, not clean)"
+        required: false
+        default: false
+        type: boolean
+      remove_music:
+        description: "Remove background music, keep the voice (Demucs)"
+        required: false
+        default: false
+        type: boolean
+      mute_audio:
+        description: "Mute all audio (overrides remove music)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -33,6 +48,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install --upgrade yt-dlp
+          # Demucs (with torch) is large, so only install it when music removal
+          # is requested.
+          if [ "${{ inputs.remove_music }}" = "true" ]; then
+            pip install demucs
+          fi
 
       - name: Ensure ffmpeg
         run: |
@@ -44,6 +64,9 @@ jobs:
       - name: Repurpose video into draft
         env:
           VIDEO_URL: ${{ inputs.video_url }}
+          REMOVE_SUBTITLES: ${{ inputs.remove_subtitles }}
+          REMOVE_MUSIC: ${{ inputs.remove_music }}
+          MUTE_AUDIO: ${{ inputs.mute_audio }}
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
           MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
           MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
