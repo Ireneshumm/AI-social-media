@@ -8,11 +8,21 @@ the draft and move it into the queue when happy. Only use this with your own
 content or content you have the rights to.
 
 Optional toggles (env, "true"/"false"):
-  REMOVE_SUBTITLES  clean burned-in subtitle/text removal via the Replicate
-                    model hjunior29/video-text-remover (GPU inpainting).
+  REMOVE_SUBTITLES  clean burned-in subtitle/text removal (GPU inpainting).
                     Requires REPLICATE_API_TOKEN.
   REMOVE_MUSIC      separate voice from music (Demucs) and keep only the voice
   MUTE_AUDIO        drop all audio (overrides REMOVE_MUSIC)
+
+Subtitle-removal tuning (env):
+  SUBTITLE_METHOD   "region" (default) inpaints a FIXED lower band on every
+                    frame with ProPainter (jd7h/propainter). Because the masked
+                    region is fixed — not per-frame detection — subtitles can
+                    never flash back, which is the failure mode of detection.
+                    "detect" uses the per-frame detector hjunior29/
+                    video-text-remover (faster, but can flicker on hard clips).
+  SUBTITLE_BAND     "top-bottom" as fractions of frame height for the region
+                    method, e.g. "0.60-0.92" (default). Widen it if a caption
+                    sits higher or lower than the default band.
 """
 import glob
 import os
@@ -42,6 +52,10 @@ def _flag(name):
 REMOVE_SUBTITLES = _flag("REMOVE_SUBTITLES")
 REMOVE_MUSIC = _flag("REMOVE_MUSIC")
 MUTE_AUDIO = _flag("MUTE_AUDIO")
+
+# "region" (fixed-band ProPainter, flicker-free) or "detect" (per-frame model).
+SUBTITLE_METHOD = (os.getenv("SUBTITLE_METHOD") or "region").strip().lower()
+SUBTITLE_BAND = (os.getenv("SUBTITLE_BAND") or "0.60-0.92").strip()
 
 MS_TENANT_ID = os.getenv("MS_TENANT_ID")
 MS_CLIENT_ID = os.getenv("MS_CLIENT_ID")
@@ -105,45 +119,136 @@ def download_video(url):
 # =========================
 # Optional processing steps
 # =========================
-def remove_subtitles(path):
-    """Clean burned-in subtitle/text removal via the Replicate model
-    hjunior29/video-text-remover (auto text detection + GPU inpainting)."""
+def _require_replicate():
     if not os.getenv("REPLICATE_API_TOKEN"):
         raise RuntimeError("REMOVE_SUBTITLES is on but REPLICATE_API_TOKEN is not set.")
-
     import replicate
 
-    # Resolve the model's latest version explicitly — running by the bare
-    # "owner/model" name returns 404 on some client versions.
-    model = replicate.models.get("hjunior29/video-text-remover")
+    return replicate
+
+
+def _replicate_ref(replicate, model_name):
+    """Resolve "owner/model" to a pinned "owner/model:version" reference.
+
+    Running by the bare name returns 404 on some client versions, so we always
+    pin. Also logs the model's real input field names so a mismatch is visible
+    in the run log instead of failing silently."""
+    model = replicate.models.get(model_name)
     version = getattr(model, "latest_version", None)
     if version is None:
-        raise RuntimeError("Replicate model 'hjunior29/video-text-remover' has no runnable version.")
-    ref = f"hjunior29/video-text-remover:{version.id}"
-    print(f"Calling Replicate {ref} (cloud processing, may take a few minutes)...")
+        raise RuntimeError(f"Replicate model '{model_name}' has no runnable version.")
+    try:
+        props = version.openapi_schema["components"]["schemas"]["Input"]["properties"]
+        print(f"{model_name} inputs: {sorted(props.keys())}")
+    except Exception:
+        pass
+    return f"{model_name}:{version.id}"
 
-    with open(path, "rb") as video_file:
-        output = replicate.run(
-            ref,
-            input={"video": video_file, "method": "hybrid"},
-        )
+
+def _save_replicate_output(output, out_path):
+    """Persist a Replicate result (file-like object, URL string, or list)."""
+    if hasattr(output, "read"):
+        with open(out_path, "wb") as f:
+            f.write(output.read())
+        return out_path
+    if isinstance(output, (list, tuple)):
+        output = output[0] if output else None
+    if output is None:
+        raise RuntimeError("Replicate returned no output.")
+    url = getattr(output, "url", None) or str(output)
+    resp = requests.get(url, timeout=1800)
+    resp.raise_for_status()
+    with open(out_path, "wb") as f:
+        f.write(resp.content)
+    return out_path
+
+
+def _parse_band(spec):
+    """Parse "top-bottom" fractions of frame height into a clamped (top, bottom)."""
+    try:
+        top_s, bot_s = spec.split("-", 1)
+        top, bot = float(top_s), float(bot_s)
+    except (ValueError, AttributeError):
+        top, bot = 0.60, 0.92
+    top = min(max(top, 0.0), 0.98)
+    bot = min(max(bot, top + 0.02), 1.0)
+    return top, bot
+
+
+def _build_band_mask(width, height, band_top, band_bottom, out_path):
+    """White (=inpaint) rectangle over the subtitle band on a black canvas."""
+    from PIL import Image, ImageDraw
+
+    img = Image.new("L", (width, height), 0)
+    ImageDraw.Draw(img).rectangle(
+        [0, int(height * band_top), width, int(height * band_bottom)], fill=255
+    )
+    img.save(out_path)
+    return out_path
+
+
+def remove_subtitles_region(path):
+    """Flicker-free subtitle removal: inpaint a FIXED lower band on every frame
+    with ProPainter (jd7h/propainter, flow-based video inpainting). The mask is
+    a fixed region, not per-frame detection, so subtitles never flash back."""
+    replicate = _require_replicate()
+    from video_transcode import get_video_info, has_audio_stream, has_tool
+
+    _, width, height, _, _ = get_video_info(path)
+    if not width or not height:
+        width, height = 720, 1280
+
+    band_top, band_bottom = _parse_band(SUBTITLE_BAND)
+    mask_path = os.path.join(os.path.dirname(path) or ".", "submask.png")
+    _build_band_mask(width, height, band_top, band_bottom, mask_path)
+    print(f"Subtitle band mask: rows {band_top:.0%}-{band_bottom:.0%} of {width}x{height}")
+
+    ref = _replicate_ref(replicate, "jd7h/propainter")
+    print(f"Calling Replicate {ref} (video inpainting, may take a few minutes)...")
+    with open(path, "rb") as video_file, open(mask_path, "rb") as mask_file:
+        output = replicate.run(ref, input={"video": video_file, "mask": mask_file})
 
     out = os.path.splitext(path)[0] + "_nosub.mp4"
-    # The client may return a file-like object, a URL string, or a list of them.
-    if hasattr(output, "read"):
-        with open(out, "wb") as f:
-            f.write(output.read())
-    else:
-        if isinstance(output, (list, tuple)):
-            output = output[0]
-        url = getattr(output, "url", None) or str(output)
-        resp = requests.get(url, timeout=900)
-        resp.raise_for_status()
-        with open(out, "wb") as f:
-            f.write(resp.content)
+    _save_replicate_output(output, out)
+
+    # ProPainter drops the audio track; splice the original sound back so
+    # downstream music/mute steps and the final file keep it.
+    if has_audio_stream(path) and has_tool("ffmpeg"):
+        merged = os.path.splitext(path)[0] + "_nosub_a.mp4"
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-i", out, "-i", path,
+             "-map", "0:v:0", "-map", "1:a:0", "-c", "copy", "-shortest", merged],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0 and os.path.exists(merged):
+            out = merged
+        else:
+            print("WARNING: could not re-attach original audio; keeping silent video.")
 
     print(f"Subtitle-removed video saved: {out} ({os.path.getsize(out)} bytes)")
     return out
+
+
+def remove_subtitles_detect(path):
+    """Per-frame subtitle/text removal via hjunior29/video-text-remover (YOLO
+    detection + inpainting). Faster, but can flicker when detection misses a
+    frame; prefer the "region" method for a guaranteed-clean result."""
+    replicate = _require_replicate()
+    ref = _replicate_ref(replicate, "hjunior29/video-text-remover")
+    print(f"Calling Replicate {ref} (per-frame detection, may take a few minutes)...")
+    with open(path, "rb") as video_file:
+        output = replicate.run(ref, input={"video": video_file, "method": "hybrid"})
+
+    out = os.path.splitext(path)[0] + "_nosub.mp4"
+    _save_replicate_output(output, out)
+    print(f"Subtitle-removed video saved: {out} ({os.path.getsize(out)} bytes)")
+    return out
+
+
+def remove_subtitles(path):
+    if SUBTITLE_METHOD == "detect":
+        return remove_subtitles_detect(path)
+    return remove_subtitles_region(path)
 
 
 def remove_background_music(path):
@@ -248,7 +353,8 @@ def main():
     try:
         validate_env()
         print(f"Repurposing: {VIDEO_URL}")
-        print(f"Toggles -> subtitles:{REMOVE_SUBTITLES}  remove_music:{REMOVE_MUSIC}  mute:{MUTE_AUDIO}\n")
+        print(f"Toggles -> subtitles:{REMOVE_SUBTITLES} (method:{SUBTITLE_METHOD} band:{SUBTITLE_BAND})  "
+              f"remove_music:{REMOVE_MUSIC}  mute:{MUTE_AUDIO}\n")
 
         print("Step 1: Downloading source (no watermark)...")
         path = download_video(VIDEO_URL)
