@@ -226,17 +226,19 @@ def remove_subtitles_region(path):
 
     ref = _replicate_ref(replicate, "jd7h/propainter")
     print(f"Calling Replicate {ref} (video inpainting, may take a few minutes)...")
-    # The mask goes in as a base64 data URI with an explicit video/mp4 type.
-    # Passing a file/Path routes through Replicate's Files API, whose delivered
-    # URL drops the extension, so the cog's ".mp4/.avi/.png/.jpg" suffix check
-    # rejects the mask. A data URI carries the type explicitly, so the cog
-    # writes it as .mp4. The (larger) video still uploads normally — the cog
-    # doesn't suffix-check it. mask_dilation grows the band a few px to swallow
-    # anti-aliased text edges.
+    # Both inputs go in as base64 data URIs with an explicit video/mp4 type.
+    # Uploading a file/Path routes through Replicate's Files API, whose
+    # delivered file lands server-side WITHOUT an extension (e.g. .../download):
+    # ProPainter then (a) rejects the mask on its ".mp4/.avi/.png/.jpg" suffix
+    # check and (b) treats the extension-less video as a frame *folder* and
+    # os.listdir()s it, raising "Not a directory". A data URI carries the type
+    # explicitly, so the cog writes each input as .mp4. mask_dilation grows the
+    # band a few px to swallow anti-aliased text edges.
+    video_uri = _data_uri(path, "video/mp4")
     mask_uri = _data_uri(mask_path, "video/mp4")
     output = replicate.run(
         ref,
-        input={"video": Path(path), "mask": mask_uri, "mask_dilation": 8},
+        input={"video": video_uri, "mask": mask_uri, "mask_dilation": 8},
     )
 
     out = os.path.splitext(path)[0] + "_nosub.mp4"
