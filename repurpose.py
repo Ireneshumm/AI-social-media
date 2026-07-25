@@ -185,22 +185,22 @@ def _data_uri(path, mime):
     return f"data:{mime};base64,{encoded}"
 
 
-def _build_band_mask_video(width, height, fps, duration, band_top, band_bottom, out_path):
-    """A black clip with a white band over the subtitle rows, matched to the
-    source fps/duration. ProPainter's cog wants the mask as a video (.mp4) — a
-    static image can lose its extension when uploaded — and a per-frame mask
-    also guarantees every frame is covered. The band is white (=inpaint)."""
-    y0 = int(height * band_top)
-    band_h = max(int(height * band_bottom) - y0, 2)
-    fps = fps or 30
-    # A little longer than the source so ProPainter (which truncates to the
-    # video length) has a mask frame for every video frame.
-    duration = (duration if (duration and duration > 0) else 15) + 1
+def _build_band_mask_video(src_path, band_top, band_bottom, out_path):
+    """Derive a black clip with a white subtitle band FROM the source video, so
+    it has exactly the same frame count. ProPainter matches mask frames to
+    video frames one-for-one and errors on any mismatch ("size of tensor a must
+    match tensor b"), so the mask must not be even one frame longer/shorter.
+    Painting each source frame black, then the band white, guarantees an exact
+    match. White = inpaint."""
+    band_h = max(band_bottom - band_top, 0.02)
+    vf = (
+        f"drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill,"
+        f"drawbox=x=0:y=ih*{band_top:.4f}:w=iw:h=ih*{band_h:.4f}:color=white:t=fill"
+    )
     subprocess.run(
         [
-            "ffmpeg", "-y",
-            "-f", "lavfi", "-i", f"color=c=black:s={width}x{height}:r={fps}:d={duration}",
-            "-vf", f"drawbox=x=0:y={y0}:w={width}:h={band_h}:color=white:t=fill",
+            "ffmpeg", "-y", "-i", src_path, "-an",
+            "-vf", vf,
             "-pix_fmt", "yuv420p", "-c:v", "libx264", out_path,
         ],
         check=True,
@@ -221,7 +221,7 @@ def remove_subtitles_region(path):
 
     band_top, band_bottom = _parse_band(SUBTITLE_BAND)
     mask_path = os.path.join(os.path.dirname(path) or ".", "submask.mp4")
-    _build_band_mask_video(width, height, fps, duration, band_top, band_bottom, mask_path)
+    _build_band_mask_video(path, band_top, band_bottom, mask_path)
     print(f"Subtitle band mask: rows {band_top:.0%}-{band_bottom:.0%} of {width}x{height}")
 
     ref = _replicate_ref(replicate, "jd7h/propainter")
