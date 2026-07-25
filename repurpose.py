@@ -210,19 +210,17 @@ def _build_band_mask_video(src_path, band_top, band_bottom, out_path):
     return out_path
 
 
-def _detect_text_boxes(src_path, samples=14, min_conf=0.45, min_frac=0.35):
-    """Sample frames and detect on-screen text with EasyOCR, then keep only the
-    boxes that are actually subtitles. Returns (width, height, boxes) of pixel
-    (x0, y0, x1, y1) tuples, or None if detection is unavailable / nothing
-    qualifies.
+def _detect_text_boxes(src_path, samples=14):
+    """Sample frames and detect on-screen text with EasyOCR. Returns
+    (width, height, boxes) where boxes are pixel (x0, y0, x1, y1) tuples of all
+    detected text across the sampled frames, or None if detection is
+    unavailable / nothing is found.
 
-    Busy beauty footage (glitter, reflections, fabric) makes OCR hallucinate
-    text all over the frame, which would balloon the mask. Two filters cut that
-    out: (1) recognise the text and drop low-confidence / <2-char reads; (2)
-    keep a box only if text recurs at the SAME spot across a good fraction of
-    frames — real burned-in subtitles sit still, false positives flicker around.
-    Masking just those tight, stable boxes puts the fix in the right place and
-    keeps it small, so ProPainter inpaints cleanly instead of smearing."""
+    We deliberately keep the FULL union of detections (rather than filtering
+    down to one tight line): covering a generous region around the text lets
+    ProPainter reconstruct the whole area from neighbouring frames, which came
+    out looking the most natural on real clips. A single implausibly tall/wide
+    box is still dropped so one bad frame can't cover the whole screen."""
     try:
         import cv2
         import easyocr
@@ -240,65 +238,30 @@ def _detect_text_boxes(src_path, samples=14, min_conf=0.45, min_frac=0.35):
 
     indexes = [int(total * i / (samples + 1)) for i in range(1, samples + 1)]
     reader = easyocr.Reader(["en"], gpu=False, verbose=False)
-
-    per_frame = []  # list (per sampled frame) of that frame's kept boxes
+    boxes = []
     for idx in indexes:
         cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
         ok, frame = cap.read()
         if not ok:
             continue
         try:
-            results = reader.readtext(frame)  # (bbox, text, confidence)
+            horizontal, _free = reader.detect(frame)
         except Exception:  # noqa: BLE001
             continue
-        frame_boxes = []
-        for bbox, text, conf in results:
-            if conf < min_conf or len((text or "").strip()) < 3:
-                continue
-            xs = [p[0] for p in bbox]
-            ys = [p[1] for p in bbox]
-            x0, y0 = max(0, int(min(xs))), max(0, int(min(ys)))
-            x1, y1 = min(width, int(max(xs))), min(height, int(max(ys)))
+        for b in horizontal[0]:
+            x_min, x_max, y_min, y_max = b
+            x0, y0 = max(0, int(x_min)), max(0, int(y_min))
+            x1, y1 = min(width, int(x_max)), min(height, int(y_max))
             if x1 <= x0 or y1 <= y0:
                 continue
-            # Drop implausibly tall/wide boxes (usually false positives).
             if (y1 - y0) > 0.35 * height or (x1 - x0) > 0.97 * width:
                 continue
-            frame_boxes.append((x0, y0, x1, y1))
-        per_frame.append(frame_boxes)
+            boxes.append((x0, y0, x1, y1))
 
     cap.release()
-    frames_used = len(per_frame)
-    if not frames_used:
+    if not boxes:
         return None
-
-    # Lock onto the dominant text LINE(s) rather than unioning every detection.
-    # Bin each box by its vertical centre; a real subtitle occupies the same
-    # row(s) in most frames, so those bins collect boxes from many frames.
-    # Scattered glitter/reflection reads land in different rows each frame, so
-    # their bins stay sparse and get dropped. This keeps the mask on the actual
-    # caption line even when OCR hallucinates text elsewhere.
-    from collections import defaultdict
-
-    bin_h = max(1, int(0.05 * height))
-    bin_frames = defaultdict(set)   # bin index -> distinct frame indices
-    bin_boxes = defaultdict(list)   # bin index -> boxes
-    for fi, frame_boxes in enumerate(per_frame):
-        for b in frame_boxes:
-            yc = (b[1] + b[3]) / 2.0
-            bi = int(yc // bin_h)
-            bin_frames[bi].add(fi)
-            bin_boxes[bi].append(b)
-
-    need = max(2, int(min_frac * frames_used))
-    qualifying = {bi for bi, frames in bin_frames.items() if len(frames) >= need}
-    if not qualifying:
-        return None
-
-    kept = [b for bi in qualifying for b in bin_boxes[bi]]
-    if not kept:
-        return None
-    return width, height, kept
+    return width, height, boxes
 
 
 def _build_mask_png(width, height, boxes, out_png, pad_frac=0.02):
