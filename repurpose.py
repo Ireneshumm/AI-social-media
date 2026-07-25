@@ -176,6 +176,15 @@ def _parse_band(spec):
     return top, bot
 
 
+def _data_uri(path, mime):
+    """Encode a file as a base64 data URI with an explicit MIME type."""
+    import base64
+
+    with open(path, "rb") as f:
+        encoded = base64.b64encode(f.read()).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
 def _build_band_mask_video(width, height, fps, duration, band_top, band_bottom, out_path):
     """A black clip with a white band over the subtitle rows, matched to the
     source fps/duration. ProPainter's cog wants the mask as a video (.mp4) — a
@@ -217,14 +226,17 @@ def remove_subtitles_region(path):
 
     ref = _replicate_ref(replicate, "jd7h/propainter")
     print(f"Calling Replicate {ref} (video inpainting, may take a few minutes)...")
-    # Pass Path objects (not bare file handles): the client guesses each file's
-    # MIME from its name, so the cog writes the upload with a real extension.
-    # A bare handle has no name, so the mask arrives suffix-less and the cog's
-    # ".mp4/.avi/.png/.jpg" check rejects it. mask_dilation grows the band a few
-    # px to swallow anti-aliased text edges.
+    # The mask goes in as a base64 data URI with an explicit video/mp4 type.
+    # Passing a file/Path routes through Replicate's Files API, whose delivered
+    # URL drops the extension, so the cog's ".mp4/.avi/.png/.jpg" suffix check
+    # rejects the mask. A data URI carries the type explicitly, so the cog
+    # writes it as .mp4. The (larger) video still uploads normally — the cog
+    # doesn't suffix-check it. mask_dilation grows the band a few px to swallow
+    # anti-aliased text edges.
+    mask_uri = _data_uri(mask_path, "video/mp4")
     output = replicate.run(
         ref,
-        input={"video": Path(path), "mask": Path(mask_path), "mask_dilation": 8},
+        input={"video": Path(path), "mask": mask_uri, "mask_dilation": 8},
     )
 
     out = os.path.splitext(path)[0] + "_nosub.mp4"
