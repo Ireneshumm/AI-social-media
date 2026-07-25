@@ -54,8 +54,10 @@ on:
         type: string
   schedule:
     - cron: "10 23 * * *"
+    - cron: "10 1 * * *"
     - cron: "10 3 * * *"
     - cron: "10 7 * * *"
+    - cron: "10 11 * * *"
     - cron: "0 3 * * 1"
     - cron: "30 15 * * 0"
     - cron: "30 22 * * *"
@@ -218,7 +220,7 @@ jobs:
             export AD_FORMAT="feed"
             export AD_TARGET_FOLDER="${ONEDRIVE_POSTS_FOLDER_NAME:-posts}"
             export AD_LAYOUT="random"
-            export AD_COUNT="3"
+            export AD_COUNT="5"
           elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 21 * * *" ]; then
             # Daily autonomous stories: generate vertical 9:16 stories into the
             # single drop folder ("posts"); aspect-ratio routing sends them to the

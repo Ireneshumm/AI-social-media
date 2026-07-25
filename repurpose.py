@@ -113,10 +113,18 @@ def remove_subtitles(path):
 
     import replicate
 
-    print("Calling Replicate video-text-remover (this runs on a cloud GPU, may take a few minutes)...")
+    # Resolve the model's latest version explicitly — running by the bare
+    # "owner/model" name returns 404 on some client versions.
+    model = replicate.models.get("hjunior29/video-text-remover")
+    version = getattr(model, "latest_version", None)
+    if version is None:
+        raise RuntimeError("Replicate model 'hjunior29/video-text-remover' has no runnable version.")
+    ref = f"hjunior29/video-text-remover:{version.id}"
+    print(f"Calling Replicate {ref} (cloud processing, may take a few minutes)...")
+
     with open(path, "rb") as video_file:
         output = replicate.run(
-            "hjunior29/video-text-remover",
+            ref,
             input={"video": video_file, "method": "hybrid"},
         )
 
