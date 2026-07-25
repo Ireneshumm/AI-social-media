@@ -21,9 +21,9 @@ on:
           - region
           - detect
       subtitle_band:
-        description: "Region method only: subtitle band as top-bottom fractions of height (e.g. 0.60-0.92). Widen if the caption sits higher/lower."
+        description: "Region method: 'auto' auto-detects the text location (recommended). Or force a band as top-bottom fractions of height, e.g. 0.25-0.42."
         required: false
-        default: "0.60-0.92"
+        default: "auto"
         type: string
       remove_music:
         description: "Remove background music, keep the voice (Demucs)"
@@ -62,6 +62,12 @@ jobs:
           pip install -r requirements.txt
           pip install --upgrade yt-dlp
           pip install replicate
+          # EasyOCR (with torch) auto-detects the subtitle region for the
+          # region method; only install it when subtitles are being removed and
+          # the band isn't a fixed manual value.
+          if [ "${{ inputs.remove_subtitles }}" = "true" ] && [ "${{ inputs.subtitle_method }}" != "detect" ]; then
+            pip install easyocr opencv-python-headless
+          fi
           # Demucs (with torch) is large, so only install it when music removal
           # is requested.
           if [ "${{ inputs.remove_music }}" = "true" ]; then
