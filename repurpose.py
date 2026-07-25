@@ -210,7 +210,7 @@ def _build_band_mask_video(src_path, band_top, band_bottom, out_path):
     return out_path
 
 
-def _detect_text_boxes(src_path, samples=14, min_conf=0.35, min_frac=0.30):
+def _detect_text_boxes(src_path, samples=14, min_conf=0.45, min_frac=0.35):
     """Sample frames and detect on-screen text with EasyOCR, then keep only the
     boxes that are actually subtitles. Returns (width, height, boxes) of pixel
     (x0, y0, x1, y1) tuples, or None if detection is unavailable / nothing
@@ -253,7 +253,7 @@ def _detect_text_boxes(src_path, samples=14, min_conf=0.35, min_frac=0.30):
             continue
         frame_boxes = []
         for bbox, text, conf in results:
-            if conf < min_conf or len((text or "").strip()) < 2:
+            if conf < min_conf or len((text or "").strip()) < 3:
                 continue
             xs = [p[0] for p in bbox]
             ys = [p[1] for p in bbox]
@@ -272,24 +272,30 @@ def _detect_text_boxes(src_path, samples=14, min_conf=0.35, min_frac=0.30):
     if not frames_used:
         return None
 
-    def center(b):
-        return ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0)
+    # Lock onto the dominant text LINE(s) rather than unioning every detection.
+    # Bin each box by its vertical centre; a real subtitle occupies the same
+    # row(s) in most frames, so those bins collect boxes from many frames.
+    # Scattered glitter/reflection reads land in different rows each frame, so
+    # their bins stay sparse and get dropped. This keeps the mask on the actual
+    # caption line even when OCR hallucinates text elsewhere.
+    from collections import defaultdict
 
-    # Keep a box only if a box near the same centre shows up in enough frames.
-    need = max(2, int(min_frac * frames_used))
-    tol_x, tol_y = 0.08 * width, 0.05 * height
-    kept = []
-    for frame_boxes in per_frame:
+    bin_h = max(1, int(0.05 * height))
+    bin_frames = defaultdict(set)   # bin index -> distinct frame indices
+    bin_boxes = defaultdict(list)   # bin index -> boxes
+    for fi, frame_boxes in enumerate(per_frame):
         for b in frame_boxes:
-            cx, cy = center(b)
-            hits = 0
-            for other in per_frame:
-                if any(abs(center(o)[0] - cx) < tol_x and abs(center(o)[1] - cy) < tol_y
-                       for o in other):
-                    hits += 1
-            if hits >= need:
-                kept.append(b)
+            yc = (b[1] + b[3]) / 2.0
+            bi = int(yc // bin_h)
+            bin_frames[bi].add(fi)
+            bin_boxes[bi].append(b)
 
+    need = max(2, int(min_frac * frames_used))
+    qualifying = {bi for bi, frames in bin_frames.items() if len(frames) >= need}
+    if not qualifying:
+        return None
+
+    kept = [b for bi in qualifying for b in bin_boxes[bi]]
     if not kept:
         return None
     return width, height, kept
