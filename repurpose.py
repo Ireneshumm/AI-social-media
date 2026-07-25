@@ -20,9 +20,10 @@ Subtitle-removal tuning (env):
                     never flash back, which is the failure mode of detection.
                     "detect" uses the per-frame detector hjunior29/
                     video-text-remover (faster, but can flicker on hard clips).
-  SUBTITLE_BAND     "top-bottom" as fractions of frame height for the region
-                    method, e.g. "0.60-0.92" (default). Widen it if a caption
-                    sits higher or lower than the default band.
+  SUBTITLE_BAND     "auto" (default) auto-detects the on-screen text region so
+                    the mask lands in the right place and stays small. Or give
+                    "top-bottom" fractions of frame height (e.g. "0.25-0.42") to
+                    force a fixed band when auto-detect misses.
 """
 import glob
 import os
@@ -54,9 +55,10 @@ REMOVE_SUBTITLES = _flag("REMOVE_SUBTITLES")
 REMOVE_MUSIC = _flag("REMOVE_MUSIC")
 MUTE_AUDIO = _flag("MUTE_AUDIO")
 
-# "region" (fixed-band ProPainter, flicker-free) or "detect" (per-frame model).
+# "region" (ProPainter, flicker-free) or "detect" (per-frame model).
 SUBTITLE_METHOD = (os.getenv("SUBTITLE_METHOD") or "region").strip().lower()
-SUBTITLE_BAND = (os.getenv("SUBTITLE_BAND") or "0.60-0.92").strip()
+# "auto" auto-detects the text region; or "top-bottom" fractions to force a band.
+SUBTITLE_BAND = (os.getenv("SUBTITLE_BAND") or "auto").strip()
 
 MS_TENANT_ID = os.getenv("MS_TENANT_ID")
 MS_CLIENT_ID = os.getenv("MS_CLIENT_ID")
@@ -208,21 +210,127 @@ def _build_band_mask_video(src_path, band_top, band_bottom, out_path):
     return out_path
 
 
+def _detect_text_boxes(src_path, samples=14):
+    """Sample frames and detect on-screen text with EasyOCR. Returns
+    (width, height, boxes) where boxes are pixel (x0, y0, x1, y1) tuples of the
+    detected text across all sampled frames, or None if detection is
+    unavailable or nothing is found. Masking only the actual text (not a fixed
+    band) puts the mask in the right place AND keeps it small, so ProPainter
+    inpaints a tight region instead of smearing a big guessed strip."""
+    try:
+        import cv2
+        import easyocr
+    except Exception as e:  # noqa: BLE001
+        print(f"Text auto-detect unavailable ({e}); will use the manual band instead.")
+        return None
+
+    cap = cv2.VideoCapture(src_path)
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 0
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 0
+    if not total or not width or not height:
+        cap.release()
+        return None
+
+    indexes = [int(total * i / (samples + 1)) for i in range(1, samples + 1)]
+    reader = easyocr.Reader(["en"], gpu=False, verbose=False)
+    boxes = []
+    for idx in indexes:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+        ok, frame = cap.read()
+        if not ok:
+            continue
+        try:
+            horizontal, _free = reader.detect(frame)
+        except Exception:  # noqa: BLE001
+            continue
+        for b in horizontal[0]:
+            x_min, x_max, y_min, y_max = b
+            x0, y0 = max(0, int(x_min)), max(0, int(y_min))
+            x1, y1 = min(width, int(x_max)), min(height, int(y_max))
+            if x1 <= x0 or y1 <= y0:
+                continue
+            # Drop implausibly tall/wide boxes (usually false positives on
+            # busy footage) so one bad frame can't balloon the masked area.
+            if (y1 - y0) > 0.35 * height or (x1 - x0) > 0.97 * width:
+                continue
+            boxes.append((x0, y0, x1, y1))
+
+    cap.release()
+    if not boxes:
+        return None
+    return width, height, boxes
+
+
+def _build_mask_png(width, height, boxes, out_png, pad_frac=0.02):
+    """White (=inpaint) rounded a little around each detected text box, on black."""
+    from PIL import Image, ImageDraw
+
+    img = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(img)
+    pad_x, pad_y = int(width * pad_frac), int(height * pad_frac)
+    for x0, y0, x1, y1 in boxes:
+        draw.rectangle(
+            [max(0, x0 - pad_x), max(0, y0 - pad_y),
+             min(width, x1 + pad_x), min(height, y1 + pad_y)],
+            fill=255,
+        )
+    img.save(out_png)
+    return out_png
+
+
+def _build_mask_video_from_png(src_path, mask_png, out_path):
+    """Turn a static white-on-black mask PNG into a mask video with EXACTLY the
+    source's frame count: black-fill each source frame, then lighten-blend the
+    looped PNG over it (white boxes win). Driving off the source frames keeps
+    the mask and video frame-for-frame aligned for ProPainter."""
+    filter_complex = (
+        "[0:v]drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill[bg];"
+        "[bg][1:v]blend=all_mode=lighten:shortest=1[m]"
+    )
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", src_path, "-loop", "1", "-i", mask_png,
+            "-filter_complex", filter_complex, "-map", "[m]", "-an",
+            "-pix_fmt", "yuv420p", "-c:v", "libx264", out_path,
+        ],
+        check=True,
+    )
+    return out_path
+
+
 def remove_subtitles_region(path):
-    """Flicker-free subtitle removal: inpaint a FIXED lower band on every frame
+    """Flicker-free subtitle removal: inpaint the text region on every frame
     with ProPainter (jd7h/propainter, flow-based video inpainting). The mask is
-    a fixed region, not per-frame detection, so subtitles never flash back."""
+    a fixed region (not per-frame detection), so subtitles never flash back. By
+    default the region is auto-detected from the actual on-screen text so it
+    lands in the right place and stays small; a manual SUBTITLE_BAND overrides."""
     replicate = _require_replicate()
     from video_transcode import get_video_info, has_audio_stream, has_tool
 
-    _, width, height, fps, duration = get_video_info(path)
-    if not width or not height:
-        width, height = 720, 1280
-
-    band_top, band_bottom = _parse_band(SUBTITLE_BAND)
     mask_path = os.path.join(os.path.dirname(path) or ".", "submask.mp4")
-    _build_band_mask_video(path, band_top, band_bottom, mask_path)
-    print(f"Subtitle band mask: rows {band_top:.0%}-{band_bottom:.0%} of {width}x{height}")
+    spec = (SUBTITLE_BAND or "auto").strip().lower()
+
+    if spec in ("", "auto"):
+        detected = _detect_text_boxes(path)
+        if detected:
+            width, height, boxes = detected
+            mask_png = os.path.join(os.path.dirname(path) or ".", "submask.png")
+            _build_mask_png(width, height, boxes, mask_png)
+            _build_mask_video_from_png(path, mask_png, mask_path)
+            top = min(b[1] for b in boxes) / height
+            bottom = max(b[3] for b in boxes) / height
+            print(f"Auto-detected on-screen text in {len(boxes)} region(s); "
+                  f"masking rows {top:.0%}-{bottom:.0%} of {width}x{height}")
+        else:
+            print("No on-screen text auto-detected. Skipping subtitle removal to "
+                  "avoid smearing a wrong region — re-run with a manual "
+                  "'subtitle_band' (e.g. 0.25-0.42) if there is text to remove.")
+            return path
+    else:
+        band_top, band_bottom = _parse_band(spec)
+        _build_band_mask_video(path, band_top, band_bottom, mask_path)
+        print(f"Subtitle band mask (manual): rows {band_top:.0%}-{band_bottom:.0%}")
 
     ref = _replicate_ref(replicate, "jd7h/propainter")
     print(f"Calling Replicate {ref} (video inpainting, may take a few minutes)...")
