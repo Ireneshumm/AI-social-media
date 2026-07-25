@@ -210,17 +210,17 @@ def _build_band_mask_video(src_path, band_top, band_bottom, out_path):
     return out_path
 
 
-def _detect_text_boxes(src_path, samples=14):
+def _detect_text_regions(src_path, samples=16, pad_frac=0.03):
     """Sample frames and detect on-screen text with EasyOCR. Returns
-    (width, height, boxes) where boxes are pixel (x0, y0, x1, y1) tuples of all
-    detected text across the sampled frames, or None if detection is
-    unavailable / nothing is found.
+    (width, height, duration, per_sample) where per_sample is a list of
+    (t_center_seconds, rect_or_None) — the padded bounding rect of the text in
+    that sampled frame, or None if that frame had no text. Returns None if
+    detection is unavailable or no frame had text.
 
-    We deliberately keep the FULL union of detections (rather than filtering
-    down to one tight line): covering a generous region around the text lets
-    ProPainter reconstruct the whole area from neighbouring frames, which came
-    out looking the most natural on real clips. A single implausibly tall/wide
-    box is still dropped so one bad frame can't cover the whole screen."""
+    Keeping a per-sample rect (with its timestamp) lets the mask be time-gated:
+    only the moments that actually show text get inpainted, so a later
+    text-free shot (e.g. the video cutting to a plain wall) is left untouched
+    instead of being needlessly repainted and smudged."""
     try:
         import cv2
         import easyocr
@@ -232,22 +232,29 @@ def _detect_text_boxes(src_path, samples=14):
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 0
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 0
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     if not total or not width or not height:
         cap.release()
         return None
+    duration = total / fps if fps else 0.0
+    pad_x, pad_y = int(width * pad_frac), int(height * pad_frac)
 
     indexes = [int(total * i / (samples + 1)) for i in range(1, samples + 1)]
     reader = easyocr.Reader(["en"], gpu=False, verbose=False)
-    boxes = []
+    per_sample = []
     for idx in indexes:
+        t = idx / fps if fps else 0.0
         cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
         ok, frame = cap.read()
         if not ok:
+            per_sample.append((t, None))
             continue
         try:
             horizontal, _free = reader.detect(frame)
         except Exception:  # noqa: BLE001
+            per_sample.append((t, None))
             continue
+        rects = []
         for b in horizontal[0]:
             x_min, x_max, y_min, y_max = b
             x0, y0 = max(0, int(x_min)), max(0, int(y_min))
@@ -256,45 +263,43 @@ def _detect_text_boxes(src_path, samples=14):
                 continue
             if (y1 - y0) > 0.35 * height or (x1 - x0) > 0.97 * width:
                 continue
-            boxes.append((x0, y0, x1, y1))
+            rects.append((x0, y0, x1, y1))
+        if rects:
+            x0 = max(0, min(r[0] for r in rects) - pad_x)
+            y0 = max(0, min(r[1] for r in rects) - pad_y)
+            x1 = min(width, max(r[2] for r in rects) + pad_x)
+            y1 = min(height, max(r[3] for r in rects) + pad_y)
+            per_sample.append((t, (x0, y0, x1, y1)))
+        else:
+            per_sample.append((t, None))
 
     cap.release()
-    if not boxes:
+    if not any(rect for _, rect in per_sample):
         return None
-    return width, height, boxes
+    return width, height, duration, per_sample
 
 
-def _build_mask_png(width, height, boxes, out_png, pad_frac=0.02):
-    """White (=inpaint) rounded a little around each detected text box, on black."""
-    from PIL import Image, ImageDraw
-
-    img = Image.new("L", (width, height), 0)
-    draw = ImageDraw.Draw(img)
-    pad_x, pad_y = int(width * pad_frac), int(height * pad_frac)
-    for x0, y0, x1, y1 in boxes:
-        draw.rectangle(
-            [max(0, x0 - pad_x), max(0, y0 - pad_y),
-             min(width, x1 + pad_x), min(height, y1 + pad_y)],
-            fill=255,
+def _build_time_gated_mask(src_path, per_sample, seg, out_path):
+    """Build a mask video (exact source frame count) where each sampled text
+    rect is painted white ONLY during its own short time window. Frames whose
+    nearest sample had no text stay fully black, so ProPainter skips them — no
+    repainting (and no smudging) of shots that never had a subtitle."""
+    parts = ["drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill"]
+    for t, rect in per_sample:
+        if not rect:
+            continue
+        x0, y0, x1, y1 = rect
+        t0 = max(0.0, t - seg / 2.0)
+        t1 = t + seg / 2.0
+        parts.append(
+            f"drawbox=x={x0}:y={y0}:w={x1 - x0}:h={y1 - y0}:color=white:t=fill:"
+            f"enable='between(t\\,{t0:.3f}\\,{t1:.3f})'"
         )
-    img.save(out_png)
-    return out_png
-
-
-def _build_mask_video_from_png(src_path, mask_png, out_path):
-    """Turn a static white-on-black mask PNG into a mask video with EXACTLY the
-    source's frame count: black-fill each source frame, then lighten-blend the
-    looped PNG over it (white boxes win). Driving off the source frames keeps
-    the mask and video frame-for-frame aligned for ProPainter."""
-    filter_complex = (
-        "[0:v]drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill[bg];"
-        "[bg][1:v]blend=all_mode=lighten:shortest=1[m]"
-    )
+    vf = ",".join(parts)
     subprocess.run(
         [
-            "ffmpeg", "-y", "-i", src_path, "-loop", "1", "-i", mask_png,
-            "-filter_complex", filter_complex, "-map", "[m]", "-an",
-            "-pix_fmt", "yuv420p", "-c:v", "libx264", out_path,
+            "ffmpeg", "-y", "-i", src_path, "-an",
+            "-vf", vf, "-pix_fmt", "yuv420p", "-c:v", "libx264", out_path,
         ],
         check=True,
     )
@@ -314,16 +319,19 @@ def remove_subtitles_region(path):
     spec = (SUBTITLE_BAND or "auto").strip().lower()
 
     if spec in ("", "auto"):
-        detected = _detect_text_boxes(path)
+        detected = _detect_text_regions(path)
         if detected:
-            width, height, boxes = detected
-            mask_png = os.path.join(os.path.dirname(path) or ".", "submask.png")
-            _build_mask_png(width, height, boxes, mask_png)
-            _build_mask_video_from_png(path, mask_png, mask_path)
-            top = min(b[1] for b in boxes) / height
-            bottom = max(b[3] for b in boxes) / height
-            print(f"Auto-detected on-screen text in {len(boxes)} region(s); "
-                  f"masking rows {top:.0%}-{bottom:.0%} of {width}x{height}")
+            width, height, duration, per_sample = detected
+            # Each sample "owns" a time window; a little overlap avoids gaps.
+            seg = (duration / len(per_sample) * 1.4) if duration else 1.0
+            _build_time_gated_mask(path, per_sample, seg, mask_path)
+            active = [(t, r) for t, r in per_sample if r]
+            top = min(r[1] for _, r in active) / height
+            bottom = max(r[3] for _, r in active) / height
+            print(f"Auto-detected text in {len(active)}/{len(per_sample)} sampled "
+                  f"frames; masking rows {top:.0%}-{bottom:.0%} only around "
+                  f"t≈{min(t for t, _ in active):.1f}-{max(t for t, _ in active):.1f}s "
+                  f"of {width}x{height}")
         else:
             print("No on-screen text auto-detected. Skipping subtitle removal to "
                   "avoid smearing a wrong region — re-run with a manual "
@@ -352,7 +360,7 @@ def remove_subtitles_region(path):
     # half precision keeps them consistent.
     output = replicate.run(
         ref,
-        input={"video": video_uri, "mask": mask_uri, "mask_dilation": 8, "fp16": True},
+        input={"video": video_uri, "mask": mask_uri, "mask_dilation": 6, "fp16": True},
     )
 
     out = os.path.splitext(path)[0] + "_nosub.mp4"
