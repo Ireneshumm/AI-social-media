@@ -236,9 +236,13 @@ def remove_subtitles_region(path):
     # band a few px to swallow anti-aliased text edges.
     video_uri = _data_uri(path, "video/mp4")
     mask_uri = _data_uri(mask_path, "video/mp4")
+    # fp16=True: this cog loads part of the model (the RAFT flow net) in half
+    # precision, so with the default fp32 path the inputs and weights mismatch
+    # ("Input FloatTensor / weight HalfTensor"). Running the whole pipeline in
+    # half precision keeps them consistent.
     output = replicate.run(
         ref,
-        input={"video": video_uri, "mask": mask_uri, "mask_dilation": 8},
+        input={"video": video_uri, "mask": mask_uri, "mask_dilation": 8, "fp16": True},
     )
 
     out = os.path.splitext(path)[0] + "_nosub.mp4"
