@@ -29,6 +29,7 @@ import os
 import subprocess
 import sys
 from datetime import datetime
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
@@ -216,8 +217,15 @@ def remove_subtitles_region(path):
 
     ref = _replicate_ref(replicate, "jd7h/propainter")
     print(f"Calling Replicate {ref} (video inpainting, may take a few minutes)...")
-    with open(path, "rb") as video_file, open(mask_path, "rb") as mask_file:
-        output = replicate.run(ref, input={"video": video_file, "mask": mask_file})
+    # Pass Path objects (not bare file handles): the client guesses each file's
+    # MIME from its name, so the cog writes the upload with a real extension.
+    # A bare handle has no name, so the mask arrives suffix-less and the cog's
+    # ".mp4/.avi/.png/.jpg" check rejects it. mask_dilation grows the band a few
+    # px to swallow anti-aliased text edges.
+    output = replicate.run(
+        ref,
+        input={"video": Path(path), "mask": Path(mask_path), "mask_dilation": 8},
+    )
 
     out = os.path.splitext(path)[0] + "_nosub.mp4"
     _save_replicate_output(output, out)
