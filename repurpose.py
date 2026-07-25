@@ -210,13 +210,19 @@ def _build_band_mask_video(src_path, band_top, band_bottom, out_path):
     return out_path
 
 
-def _detect_text_boxes(src_path, samples=14):
-    """Sample frames and detect on-screen text with EasyOCR. Returns
-    (width, height, boxes) where boxes are pixel (x0, y0, x1, y1) tuples of the
-    detected text across all sampled frames, or None if detection is
-    unavailable or nothing is found. Masking only the actual text (not a fixed
-    band) puts the mask in the right place AND keeps it small, so ProPainter
-    inpaints a tight region instead of smearing a big guessed strip."""
+def _detect_text_boxes(src_path, samples=14, min_conf=0.35, min_frac=0.30):
+    """Sample frames and detect on-screen text with EasyOCR, then keep only the
+    boxes that are actually subtitles. Returns (width, height, boxes) of pixel
+    (x0, y0, x1, y1) tuples, or None if detection is unavailable / nothing
+    qualifies.
+
+    Busy beauty footage (glitter, reflections, fabric) makes OCR hallucinate
+    text all over the frame, which would balloon the mask. Two filters cut that
+    out: (1) recognise the text and drop low-confidence / <2-char reads; (2)
+    keep a box only if text recurs at the SAME spot across a good fraction of
+    frames — real burned-in subtitles sit still, false positives flicker around.
+    Masking just those tight, stable boxes puts the fix in the right place and
+    keeps it small, so ProPainter inpaints cleanly instead of smearing."""
     try:
         import cv2
         import easyocr
@@ -234,32 +240,59 @@ def _detect_text_boxes(src_path, samples=14):
 
     indexes = [int(total * i / (samples + 1)) for i in range(1, samples + 1)]
     reader = easyocr.Reader(["en"], gpu=False, verbose=False)
-    boxes = []
+
+    per_frame = []  # list (per sampled frame) of that frame's kept boxes
     for idx in indexes:
         cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
         ok, frame = cap.read()
         if not ok:
             continue
         try:
-            horizontal, _free = reader.detect(frame)
+            results = reader.readtext(frame)  # (bbox, text, confidence)
         except Exception:  # noqa: BLE001
             continue
-        for b in horizontal[0]:
-            x_min, x_max, y_min, y_max = b
-            x0, y0 = max(0, int(x_min)), max(0, int(y_min))
-            x1, y1 = min(width, int(x_max)), min(height, int(y_max))
+        frame_boxes = []
+        for bbox, text, conf in results:
+            if conf < min_conf or len((text or "").strip()) < 2:
+                continue
+            xs = [p[0] for p in bbox]
+            ys = [p[1] for p in bbox]
+            x0, y0 = max(0, int(min(xs))), max(0, int(min(ys)))
+            x1, y1 = min(width, int(max(xs))), min(height, int(max(ys)))
             if x1 <= x0 or y1 <= y0:
                 continue
-            # Drop implausibly tall/wide boxes (usually false positives on
-            # busy footage) so one bad frame can't balloon the masked area.
+            # Drop implausibly tall/wide boxes (usually false positives).
             if (y1 - y0) > 0.35 * height or (x1 - x0) > 0.97 * width:
                 continue
-            boxes.append((x0, y0, x1, y1))
+            frame_boxes.append((x0, y0, x1, y1))
+        per_frame.append(frame_boxes)
 
     cap.release()
-    if not boxes:
+    frames_used = len(per_frame)
+    if not frames_used:
         return None
-    return width, height, boxes
+
+    def center(b):
+        return ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0)
+
+    # Keep a box only if a box near the same centre shows up in enough frames.
+    need = max(2, int(min_frac * frames_used))
+    tol_x, tol_y = 0.08 * width, 0.05 * height
+    kept = []
+    for frame_boxes in per_frame:
+        for b in frame_boxes:
+            cx, cy = center(b)
+            hits = 0
+            for other in per_frame:
+                if any(abs(center(o)[0] - cx) < tol_x and abs(center(o)[1] - cy) < tol_y
+                       for o in other):
+                    hits += 1
+            if hits >= need:
+                kept.append(b)
+
+    if not kept:
+        return None
+    return width, height, kept
 
 
 def _build_mask_png(width, height, boxes, out_png, pad_frac=0.02):
