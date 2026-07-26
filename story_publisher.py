@@ -24,6 +24,7 @@ from alert_email import send_alert_safely
 from facebook_publish import publish_facebook_story, FB_PUBLISH_ENABLED
 from video_transcode import ensure_h264
 from media_analysis import get_caption_image_uris
+from compliance import COMPLIANCE_RULES, scrub_caption
 
 load_dotenv()
 
@@ -395,6 +396,8 @@ Requirements:
 - No overpromising results
 - Use a soft call to action only if it feels natural
 - Return only the caption text
+
+{COMPLIANCE_RULES}
 """
         content = [{"type": "input_text", "text": prompt}]
         for uri in image_uris:
@@ -416,6 +419,8 @@ Requirements:
 - No overpromising results
 - Use a soft call to action only if it feels natural
 - Return only the caption text
+
+{COMPLIANCE_RULES}
 """
         model_input = prompt
 
@@ -428,7 +433,7 @@ Requirements:
                 model=OPENAI_MODEL,
                 input=model_input
             )
-            return response.output_text.strip()
+            return scrub_caption(response.output_text.strip())
         except Exception as e:
             last_error = e
             print(f"OpenAI caption attempt {attempt} failed: {e}")

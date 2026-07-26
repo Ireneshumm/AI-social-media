@@ -22,6 +22,7 @@ from alert_email import send_alert_safely
 from facebook_publish import publish_facebook_post, FB_PUBLISH_ENABLED
 from video_transcode import ensure_h264
 from media_analysis import get_caption_image_uris
+from compliance import COMPLIANCE_RULES, scrub_caption
 
 load_dotenv()
 
@@ -491,6 +492,8 @@ Requirements:
 - Make it suitable for an Instagram post
 - Write ONLY the caption body. Do NOT include hashtags, any call to action, booking instructions, links, phone numbers, email, or address (a fixed footer with all of that is added automatically after your text)
 - No medical claims and no guaranteed results
+
+{COMPLIANCE_RULES}
 """
         content = [{"type": "input_text", "text": prompt}]
         for uri in image_uris:
@@ -509,6 +512,8 @@ Requirements:
 - Make it suitable for an Instagram post
 - Write ONLY the caption body. Do NOT include hashtags, any call to action, booking instructions, links, phone numbers, email, or address (a fixed footer with all of that is added automatically after your text)
 - No medical claims and no guaranteed results
+
+{COMPLIANCE_RULES}
 """
         model_input = prompt
 
@@ -521,7 +526,7 @@ Requirements:
                 model=OPENAI_MODEL,
                 input=model_input
             )
-            body = response.output_text.strip()
+            body = scrub_caption(response.output_text.strip())
             return f"{body}\n\n{CAPTION_FOOTER}"
         except Exception as e:
             last_error = e

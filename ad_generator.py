@@ -141,7 +141,7 @@ TOPICS = [
         "services": [
             {"name": "HIFU", "desc": "Deep lifting energy", "icon": "lift"},
             {"name": "RF Tightening", "desc": "Firm & sculpt", "icon": "wave"},
-            {"name": "Profhilo", "desc": "Skin bio-remodelling", "icon": "droplet"},
+            {"name": "LED Therapy", "desc": "Firm & renew", "icon": "glow"},
             {"name": "Contouring", "desc": "Defined jawline", "icon": "target"},
         ],
         "scene": "an elegant minimal clinic with subtle modern technology, relaxed facial treatment",
@@ -172,25 +172,15 @@ TOPICS = [
             {"name": "PicoWay Laser", "desc": "Precision pigment care", "icon": "target"},
             {"name": "Carbon Laser", "desc": "Bright, refined skin", "icon": "sparkle"},
             {"name": "Photofacial", "desc": "Even skin tone", "icon": "glow"},
-            {"name": "Skin Boosters", "desc": "Hydrate & restore", "icon": "droplet"},
+            {"name": "Brightening Facial", "desc": "Hydrate & restore", "icon": "droplet"},
         ],
         "scene": "a bright fresh modern clinic, professional laser pigmentation treatment, glowing skin",
     },
-    {
-        "key": "anti_wrinkle",
-        "headline_lines": ["Refined,", "Not", "Frozen"],
-        "subheadline": "Subtle anti-wrinkle artistry that still looks like you.",
-        "tagline": "Naturally, effortlessly you.",
-        "price": "FROM $179*",
-        "badge": ["EXPERT", "INJECTORS", "REAL RESULTS"],
-        "services": [
-            {"name": "Anti Wrinkle", "desc": "Soften fine lines", "icon": "sparkle"},
-            {"name": "Dermal Fillers", "desc": "Restore volume", "icon": "droplet"},
-            {"name": "Skin Boosters", "desc": "Glass-skin glow", "icon": "glow"},
-            {"name": "Bio-Remodel", "desc": "Firm & smooth", "icon": "lift"},
-        ],
-        "scene": "an elegant consultation room, refined injectable treatment moment, tasteful and clinical",
-    },
+    # NOTE: Injectable topics (anti-wrinkle / botulinum toxin, dermal fillers,
+    # skin boosters, bio-remodelling, unapproved peptides) are intentionally NOT
+    # offered here. Advertising prescription-only cosmetic injectables to the
+    # public — directly or indirectly — is prohibited in Australia (TGA), so
+    # they must never enter the generated-ad rotation.
     {
         "key": "massage",
         "headline_lines": ["Slow", "Down,", "Restore"],
@@ -276,7 +266,6 @@ DEVICE_SCENES = {
     "hifu": "a modern HIFU / ultrasound skin-tightening machine with handpiece and elegant control screen",
     "facial": "a luxury facial steamer and serum bottles on a clean minimal clinic bench, elegant tools",
     "pigmentation": "a pico / carbon laser device with handpiece, sleek dark panel and warm ambient light",
-    "anti_wrinkle": "elegant medical injectable vials and a fine needle on a sterile tray, refined and clinical",
     "massage": "warm basalt massage stones, rolled towels and aromatherapy oils on a spa bench",
     "laser": "a high-end aesthetic laser platform with handpiece and glowing touchscreen, dark sleek housing",
     "ipl": "an IPL photofacial machine with handpiece and cooling tip, modern clinical technology",
