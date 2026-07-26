@@ -430,7 +430,7 @@ Requirements:
                 input=model_input
             )
             body = response.output_text.strip()
-            return f"{body}\n\n{BOOKING_CTA}"
+            return f"{body}\n\n{CAPTION_FOOTER}"
         except Exception as e:
             last_error = e
 
