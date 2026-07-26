@@ -1,13 +1,17 @@
-"""Repurpose a TikTok / Instagram video into a ready-to-publish draft.
+"""Repurpose a TikTok / Instagram video for publishing.
 
 Given a share URL, downloads the source without the on-screen watermark
-(yt-dlp), optionally removes burned-in subtitles / background music / all audio,
-normalizes it to the publishing spec (1080x1920 H.264), and uploads it to the
-OneDrive review folder ("drafts"). Nothing is published automatically — review
-the draft and move it into the queue when happy. Only use this with your own
-content or content you have the rights to.
+(yt-dlp) and normalizes it to the publishing spec (1080x1920 H.264). Two modes
+(REPURPOSE_MODE):
+  review (default)  optionally removes burned-in subtitles / background music /
+                    all audio, then uploads to the OneDrive review folder
+                    ("drafts") — nothing is published until you move it into the
+                    queue.
+  auto              makes NO changes and uploads straight into the publish queue
+                    ("posts"), so it is auto-published on the next scheduled run.
+Only use this with your own content or content you have the rights to.
 
-Optional toggles (env, "true"/"false"):
+Optional toggles (env, "true"/"false"; review mode only):
   REMOVE_SUBTITLES  clean burned-in subtitle/text removal (GPU inpainting).
                     Requires REPLICATE_API_TOKEN.
   REMOVE_MUSIC      separate voice from music (Demucs) and keep only the voice
@@ -70,7 +74,12 @@ REVIEW_FOLDER_NAME = (
     or os.getenv("ONEDRIVE_DRAFTS_FOLDER_NAME")
     or "drafts"
 )
+ONEDRIVE_POSTS_FOLDER_NAME = os.getenv("ONEDRIVE_POSTS_FOLDER_NAME") or "posts"
 ONEDRIVE_USER_EMAIL = os.getenv("ONEDRIVE_USER_EMAIL") or "info@rebornaesthetics.com.au"
+
+# "review": download + optional edits -> drafts, approve before publishing.
+# "auto":   download raw, no edits    -> posts, auto-published on the next run.
+REPURPOSE_MODE = (os.getenv("REPURPOSE_MODE") or "review").strip().lower()
 
 AUTHORITY = f"https://login.microsoftonline.com/{MS_TENANT_ID}"
 SCOPES = ["https://graph.microsoft.com/.default"]
@@ -448,7 +457,7 @@ def _find_folder(items, name):
     return None
 
 
-def ensure_review_folder(token):
+def ensure_target_folder(token, folder_name):
     root = _graph("GET", f"{GRAPH_ROOT}/drive/root/children", token).json()
     project = _find_folder(root, ONEDRIVE_ROOT_PATH)
     if not project:
@@ -456,18 +465,18 @@ def ensure_review_folder(token):
 
     children_url = f"{GRAPH_ROOT}/drive/items/{project['id']}/children"
     children = _graph("GET", children_url, token).json()
-    folder = _find_folder(children, REVIEW_FOLDER_NAME)
+    folder = _find_folder(children, folder_name)
     if folder:
         return folder["id"]
 
     created = _graph(
         "POST", children_url, token,
-        json={"name": REVIEW_FOLDER_NAME, "folder": {}, "@microsoft.graph.conflictBehavior": "rename"},
+        json={"name": folder_name, "folder": {}, "@microsoft.graph.conflictBehavior": "rename"},
     ).json()
     return created["id"]
 
 
-def upload_video(token, folder_id, filename, path):
+def upload_video(token, folder_id, folder_name, filename, path):
     session = _graph(
         "POST",
         f"{GRAPH_ROOT}/drive/items/{folder_id}:/{filename}:/createUploadSession",
@@ -490,7 +499,7 @@ def upload_video(token, folder_id, filename, path):
             )
             resp.raise_for_status()
             start = end + 1
-    print(f"Uploaded to {REVIEW_FOLDER_NAME}/{filename} ({size} bytes)")
+    print(f"Uploaded to {folder_name}/{filename} ({size} bytes)")
 
 
 # =========================
@@ -499,36 +508,50 @@ def upload_video(token, folder_id, filename, path):
 def main():
     try:
         validate_env()
+        auto = REPURPOSE_MODE == "auto"
+        target_folder = ONEDRIVE_POSTS_FOLDER_NAME if auto else REVIEW_FOLDER_NAME
+
         print(f"Repurposing: {VIDEO_URL}")
-        print(f"Toggles -> subtitles:{REMOVE_SUBTITLES} (method:{SUBTITLE_METHOD} band:{SUBTITLE_BAND})  "
-              f"remove_music:{REMOVE_MUSIC}  mute:{MUTE_AUDIO}\n")
+        if auto:
+            print(f"Mode: AUTO-PUBLISH — raw download straight into '{target_folder}' "
+                  "(no edits; auto-published on the next scheduled run).\n")
+        else:
+            print(f"Mode: REVIEW — edited copy into '{target_folder}' for approval.")
+            print(f"Toggles -> subtitles:{REMOVE_SUBTITLES} (method:{SUBTITLE_METHOD} "
+                  f"band:{SUBTITLE_BAND})  remove_music:{REMOVE_MUSIC}  mute:{MUTE_AUDIO}\n")
 
         print("Step 1: Downloading source (no watermark)...")
         path = download_video(VIDEO_URL)
 
-        if REMOVE_SUBTITLES:
-            print("\nStep 2a: Removing subtitles (Replicate GPU inpainting)...")
-            path = remove_subtitles(path)
+        # Auto-publish mode intentionally makes NO changes to the content.
+        if not auto:
+            if REMOVE_SUBTITLES:
+                print("\nStep 2a: Removing subtitles (Replicate GPU inpainting)...")
+                path = remove_subtitles(path)
 
-        if MUTE_AUDIO:
-            print("\nStep 2b: Muting all audio...")
-            path = mute_audio(path)
-        elif REMOVE_MUSIC:
-            print("\nStep 2b: Removing background music (keeping voice)...")
-            path = remove_background_music(path)
+            if MUTE_AUDIO:
+                print("\nStep 2b: Muting all audio...")
+                path = mute_audio(path)
+            elif REMOVE_MUSIC:
+                print("\nStep 2b: Removing background music (keeping voice)...")
+                path = remove_background_music(path)
 
         print("\nStep 3: Normalizing to 1080x1920 H.264...")
         final_path = ensure_h264(path)
 
-        print("\nStep 4: Uploading to review folder...")
+        print(f"\nStep 4: Uploading to '{target_folder}'...")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         base = os.path.splitext(os.path.basename(path))[0]
         filename = f"repost_{base}_{timestamp}.mp4"
         token = get_access_token()
-        folder_id = ensure_review_folder(token)
-        upload_video(token, folder_id, filename, final_path)
+        folder_id = ensure_target_folder(token, target_folder)
+        upload_video(token, folder_id, target_folder, filename, final_path)
 
-        print(f"\nDone. Review '{REVIEW_FOLDER_NAME}/{filename}', then move it into the posts folder to publish.")
+        if auto:
+            print(f"\nDone. '{target_folder}/{filename}' will be auto-published on the next scheduled run.")
+        else:
+            print(f"\nDone. Review '{target_folder}/{filename}', then move it into "
+                  f"the '{ONEDRIVE_POSTS_FOLDER_NAME}' folder to publish.")
         sys.exit(0)
 
     except subprocess.CalledProcessError as e:

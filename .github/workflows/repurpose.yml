@@ -7,6 +7,14 @@ on:
         description: "TikTok or Instagram video URL (your own / rights-cleared content)"
         required: true
         type: string
+      mode:
+        description: "review = edit then wait in drafts for approval; auto = no edits, straight to posts and auto-published"
+        required: false
+        default: "review"
+        type: choice
+        options:
+          - review
+          - auto
       remove_subtitles:
         description: "Remove subtitles (clean, via Replicate GPU inpainting)"
         required: false
@@ -84,11 +92,13 @@ jobs:
       - name: Repurpose video into draft
         env:
           VIDEO_URL: ${{ inputs.video_url }}
+          REPURPOSE_MODE: ${{ inputs.mode }}
           REMOVE_SUBTITLES: ${{ inputs.remove_subtitles }}
           SUBTITLE_METHOD: ${{ inputs.subtitle_method }}
           SUBTITLE_BAND: ${{ inputs.subtitle_band }}
           REMOVE_MUSIC: ${{ inputs.remove_music }}
           MUTE_AUDIO: ${{ inputs.mute_audio }}
+          ONEDRIVE_POSTS_FOLDER_NAME: ${{ secrets.ONEDRIVE_POSTS_FOLDER_NAME }}
           REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
           MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
