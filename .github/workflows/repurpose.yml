@@ -93,6 +93,7 @@ jobs:
         env:
           VIDEO_URL: ${{ inputs.video_url }}
           REPURPOSE_MODE: ${{ inputs.mode }}
+          YTDLP_COOKIES: ${{ secrets.YTDLP_COOKIES }}
           REMOVE_SUBTITLES: ${{ inputs.remove_subtitles }}
           SUBTITLE_METHOD: ${{ inputs.subtitle_method }}
           SUBTITLE_BAND: ${{ inputs.subtitle_band }}

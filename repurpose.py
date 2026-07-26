@@ -112,12 +112,24 @@ def download_video(url):
             pass
 
     template = "dl/%(id)s.%(ext)s"
-    run([
+    cmd = [
         "yt-dlp", "--no-playlist", "--no-warnings",
         "-f", "mp4/bestvideo*+bestaudio/best",
         "--merge-output-format", "mp4",
-        "-o", template, url,
-    ])
+    ]
+
+    # Instagram and Douyin usually require a logged-in session. If cookies are
+    # provided (Netscape cookies.txt content in the YTDLP_COOKIES secret), write
+    # them to a file and hand them to yt-dlp so those sites download too.
+    cookies = os.getenv("YTDLP_COOKIES")
+    if cookies and cookies.strip():
+        with open("cookies.txt", "w", encoding="utf-8") as f:
+            f.write(cookies)
+        cmd += ["--cookies", "cookies.txt"]
+        print("Using provided login cookies for download.")
+
+    cmd += ["-o", template, url]
+    run(cmd)
 
     videos = [f for f in glob.glob("dl/*") if f.lower().endswith(VIDEO_EXTS)]
     if not videos:
