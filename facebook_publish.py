@@ -147,19 +147,33 @@ def get_page_credentials():
 # =========================
 # Feed post (image / video)
 # =========================
-def publish_photo_post(page_id, token, image_url, caption):
-    # Two-step: upload the photo unpublished to get a photo id, then attach it
-    # to a feed post. A single published /photos?url= call validates the image
-    # more strictly and can reject it with error 2069019, so we avoid it.
+def _image_mime(path):
+    ext = os.path.splitext(path)[1].lower()
+    return {".png": "image/png", ".webp": "image/webp"}.get(ext, "image/jpeg")
+
+
+def _upload_unpublished_photo(page_id, token, image_path, label):
+    # Upload the raw image bytes (source=) instead of handing Facebook a URL to
+    # fetch: the WordPress host blocks Facebook's image scraper, so a url= upload
+    # comes back as "Missing or invalid image file" (error 324 / 2069019).
+    with open(image_path, "rb") as f:
+        image_bytes = f.read()
     photos_url = f"{GRAPH_BASE}/{page_id}/photos"
     upload = request_with_retry(
         "POST",
         photos_url,
-        "facebook feed photo upload",
-        data={"url": image_url, "published": "false", "access_token": token},
+        label,
+        data={"published": "false", "access_token": token},
+        files={"source": (os.path.basename(image_path), image_bytes, _image_mime(image_path))},
         timeout=60,
     )
-    photo_id = upload.json()["id"]
+    return upload.json()["id"]
+
+
+def publish_photo_post(page_id, token, image_path, caption):
+    # Two-step: upload the photo unpublished to get a photo id, then attach it
+    # to a feed post so the caption/message is preserved.
+    photo_id = _upload_unpublished_photo(page_id, token, image_path, "facebook feed photo upload")
 
     feed_url = f"{GRAPH_BASE}/{page_id}/feed"
     payload = {
@@ -194,23 +208,17 @@ def publish_facebook_post(media_url, caption, media_kind, media_path=None, page_
         if not media_path:
             raise RuntimeError("media_path is required to publish a Facebook video post.")
         return publish_video_post(page_id, token, media_path, caption)
-    return publish_photo_post(page_id, token, media_url, caption)
+    if not media_path:
+        raise RuntimeError("media_path is required to publish a Facebook photo post.")
+    return publish_photo_post(page_id, token, media_path, caption)
 
 
 # =========================
 # Story (image / video)
 # =========================
-def publish_photo_story(page_id, token, image_url):
-    # Step 1: upload the photo unpublished to get a photo id.
-    photos_url = f"{GRAPH_BASE}/{page_id}/photos"
-    upload = request_with_retry(
-        "POST",
-        photos_url,
-        "facebook story photo upload",
-        data={"url": image_url, "published": "false", "access_token": token},
-        timeout=60,
-    )
-    photo_id = upload.json()["id"]
+def publish_photo_story(page_id, token, image_path):
+    # Step 1: upload the photo unpublished (raw bytes) to get a photo id.
+    photo_id = _upload_unpublished_photo(page_id, token, image_path, "facebook story photo upload")
 
     # Step 2: publish the photo as a story.
     story_url = f"{GRAPH_BASE}/{page_id}/photo_stories"
@@ -275,4 +283,6 @@ def publish_facebook_story(media_url, media_kind, media_path=None, page_id=None)
         if not media_path:
             raise RuntimeError("media_path is required to publish a Facebook video story.")
         return publish_video_story(page_id, token, media_path)
-    return publish_photo_story(page_id, token, media_url)
+    if not media_path:
+        raise RuntimeError("media_path is required to publish a Facebook photo story.")
+    return publish_photo_story(page_id, token, media_path)
