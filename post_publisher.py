@@ -49,6 +49,18 @@ PAGE_ACCESS_TOKEN = (os.getenv("PAGE_ACCESS_TOKEN") or "").strip()
 GRAPH_VERSION = os.getenv("META_GRAPH_API_VERSION", "v23.0")
 DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
 
+# If the chosen asset fails to publish, fall back to other assets (videos first)
+# up to this many total attempts, so a run almost always publishes something.
+MAX_PUBLISH_ATTEMPTS = int(os.getenv("MAX_PUBLISH_ATTEMPTS", "4"))
+
+# Repeating video/photo layout for the Instagram profile grid. The default of
+# video, video, photo produces a 2-videos-to-1-photo grid. The position advances
+# with each published feed post. Override via the FEED_PATTERN env var (a
+# comma-separated list, e.g. "video,video,photo").
+FEED_PATTERN = [
+    k.strip() for k in (os.getenv("FEED_PATTERN") or "video,video,photo").split(",") if k.strip()
+]
+
 # Video containers are processed asynchronously by Instagram, so we poll the
 # container status before publishing. Defaults give up to ~5 minutes.
 VIDEO_POLL_MAX_ATTEMPTS = int(os.getenv("VIDEO_POLL_MAX_ATTEMPTS", "30"))
@@ -383,6 +395,17 @@ def archive_post_assets(token, selected_post, success=True):
 # =========================
 # Asset matching
 # =========================
+def _normalize_kind(value):
+    """Map user-facing kind words to the internal kind labels ('video'/'image').
+    Returns '' for anything unrecognized (meaning: no kind preference)."""
+    v = (value or "").strip().lower()
+    if v in ("video", "videos", "reel", "reels", "vid"):
+        return "video"
+    if v in ("photo", "photos", "image", "images", "img", "picture", "pic"):
+        return "image"
+    return ""
+
+
 def match_post_assets(items):
     # A single drop folder feeds both channels: tall/vertical (9:16) media is
     # reserved for Stories, so feed posting takes everything that is NOT vertical
@@ -745,8 +768,137 @@ def publish_instagram_post(media_url, caption, media_kind, media_path=None):
 # =========================
 # Main flow
 # =========================
+def order_publish_candidates(matched, first, rng):
+    """Order the assets we will try to publish this run.
+
+    The variety pick goes first. If it fails, we fall back to the remaining
+    assets with VIDEOS FIRST — videos are uploaded to Instagram/Facebook as raw
+    bytes, so they never hit the "media could not be fetched" image problem and
+    are the most reliable way to make sure *something* gets published each run.
+    """
+    remaining = [m for m in matched if m is not first]
+    videos = [m for m in remaining if m["kind"] == "video"]
+    images = [m for m in remaining if m["kind"] != "video"]
+    rng.shuffle(videos)
+    rng.shuffle(images)
+    return [first] + videos + images
+
+
+def attempt_publish(token, selected_post):
+    """Run the full download -> caption -> publish -> archive-success flow for a
+    single asset. Returns the Instagram publish result on success. Raises on any
+    failure so the caller can archive the failed asset and fall back to another.
+    """
+    media_kind = selected_post["kind"]
+    print(f"Selected post: {selected_post['base_name']}")
+    print(f"Media file: {selected_post['media']['name']} (kind: {media_kind})\n")
+
+    print("Step 4: Generating brief from media filename...")
+    brief_text = filename_to_brief(selected_post["media"]["name"])
+
+    if not brief_text:
+        raise Exception("Brief text is empty.")
+
+    print("Generated brief text:")
+    print(brief_text)
+    print()
+
+    print("Step 5: Downloading media file for local verification...")
+    media_bytes = download_file(token, selected_post["media"]["id"])
+    os.makedirs("temp", exist_ok=True)
+    media_path = os.path.join("temp", selected_post["media"]["name"])
+
+    with open(media_path, "wb") as f:
+        f.write(media_bytes)
+
+    print(f"Media saved to: {media_path}")
+    print(f"Media size: {len(media_bytes)} bytes\n")
+
+    if media_kind == "video":
+        print("Step 5b: Ensuring video is H.264 (transcode if needed)...")
+        media_path = ensure_h264(media_path)
+        print()
+
+    if media_kind == "video":
+        # Videos are uploaded directly to Instagram and Facebook as bytes,
+        # so WordPress hosting (which blocks their video fetchers) is skipped.
+        print("Step 6: Skipping WordPress upload for video (sent directly to Instagram/Facebook).\n")
+        media_url = None
+    else:
+        print("Step 5c: Normalizing image for Instagram (sRGB JPEG)...")
+        media_path = ensure_ig_image(media_path)
+
+        # Prefer imgbb — Instagram reliably fetches it. Fall back to
+        # WordPress when no imgbb key is set or the upload fails.
+        media_url = upload_to_imgbb(media_path)
+        if media_url:
+            print(f"Step 6: Hosted image on imgbb: {media_url}")
+        else:
+            print("Step 6: Uploading media to WordPress Media Library...")
+            media_result = upload_media(Path(media_path))
+            media_url = media_result.get("source_url")
+            if not media_url:
+                raise RuntimeError("WordPress media upload did not return source_url.")
+            print(f"WordPress source_url: {media_url}")
+        print()
+
+    print("Step 7: Generating caption with OpenAI (from media content)...")
+    content_images = get_caption_image_uris(media_path, media_kind)
+    if content_images:
+        print(f"Analyzing {len(content_images)} image(s) from the media for the caption.")
+    else:
+        print("No media images available; using filename brief only.")
+    caption = generate_caption(brief_text, image_uris=content_images)
+    print("Caption generated.\n")
+
+    print("Generated caption:")
+    print(caption)
+    print()
+
+    if DRY_RUN:
+        print("DRY_RUN=true, skipping Instagram publish.")
+        sys.exit(0)
+
+    print("Step 8: Publishing to Instagram...")
+    publish_result = publish_instagram_post(media_url, caption, media_kind, media_path=media_path)
+    print("Instagram publish completed.\n")
+
+    print("Publish result:")
+    print(f"creation_id: {publish_result['creation_id']}")
+    print(f"media_id   : {publish_result['media_id']}")
+    print()
+
+    if FB_PUBLISH_ENABLED:
+        print("Step 8b: Cross-posting to Facebook Page...")
+        try:
+            fb_result = publish_facebook_post(media_url, caption, media_kind, media_path=media_path)
+            print(f"Facebook post published: {fb_result}\n")
+        except Exception as fb_error:
+            # Instagram already succeeded; a Facebook failure must not fail
+            # the run. Surface it via logs and a non-fatal alert instead.
+            print(f"WARNING: Facebook cross-post failed (Instagram already succeeded): {fb_error}\n")
+            send_alert_safely(
+                "Reborn Auto Publisher: Facebook cross-post failed (post)",
+                "\n".join([
+                    "Instagram post succeeded but the Facebook cross-post failed.",
+                    f"Media: {selected_post['media']['name']}",
+                    f"Error: {fb_error}",
+                    "",
+                    "Please check GitHub Actions logs. The Instagram post was published normally.",
+                ]),
+            )
+
+    print("Step 9: Archiving success item to posted/posts...")
+    archive_result = archive_post_assets(token, selected_post, success=True)
+    print("Archive completed.")
+    print(f"Moved to: {archive_result['target_folder']}")
+    print(f"Media: {archive_result['media_name']}")
+    print()
+
+    return publish_result
+
+
 def main():
-    selected_post = None
     token = None
 
     try:
@@ -768,166 +920,103 @@ def main():
             print("No valid feed post assets found. Exit gracefully.")
             sys.exit(0)
 
-        # Steer away from the kinds of content most recently posted, then pick at
-        # random among the rest, so the feed rotates through different treatments
-        # instead of repeating the same theme or draining in upload order.
+        # Steer away from the kinds of content most recently posted, and count how
+        # many feed posts we have published so far so the grid can follow a fixed
+        # video/photo layout pattern.
         recent_groups = set()
+        posted_count = 0
         try:
             posted_sub = get_subfolder_by_path(token, ONEDRIVE_POSTED_FOLDER_NAME, ONEDRIVE_POSTS_FOLDER_NAME)
-            recent_groups = recent_content_groups(get_folder_children(token, posted_sub["id"]), n=2)
+            posted_children = get_folder_children(token, posted_sub["id"])
+            recent_groups = recent_content_groups(posted_children, n=2)
+            posted_count = sum(
+                1 for it in posted_children
+                if "folder" not in it and is_supported_media_file(it.get("name", ""))
+            )
         except Exception as e:
-            print(f"Variety history unavailable ({e}); selecting at random.")
-        selected_post = pick_with_variety(matched, recent_groups, random)
-        media_kind = selected_post["kind"]
-        print(
-            f"{len(matched)} feed asset(s) available; avoided recent {sorted(recent_groups) or 'none'}; "
-            f"selected {selected_post['media']['name']}."
-        )
-        print(f"Selected post: {selected_post['base_name']}")
-        print(f"Media file: {selected_post['media']['name']} (kind: {media_kind})\n")
+            print(f"Variety/pattern history unavailable ({e}); selecting at random.")
 
-        print("Step 4: Generating brief from media filename...")
-        brief_text = filename_to_brief(selected_post["media"]["name"])
+        # Decide the media kind for this run so the Instagram profile grid follows
+        # the desired repeating layout (default 2 videos : 1 photo). The position
+        # advances with every published post, producing V, V, P, V, V, P, ...
+        # A manual PREFERRED_KIND overrides the pattern (handy for one-off tests).
+        want_kind = _normalize_kind(os.getenv("PREFERRED_KIND"))
+        if want_kind:
+            print(f"PREFERRED_KIND override: targeting a {want_kind} post this run.")
+        elif FEED_PATTERN:
+            pos = posted_count % len(FEED_PATTERN)
+            want_kind = _normalize_kind(FEED_PATTERN[pos])
+            print(
+                f"Feed grid pattern {FEED_PATTERN}: position {pos} -> {want_kind or 'any'} "
+                f"({posted_count} post(s) already published)."
+            )
 
-        if not brief_text:
-            raise Exception("Brief text is empty.")
-
-        print("Generated brief text:")
-        print(brief_text)
-        print()
-
-        print("Step 5: Downloading media file for local verification...")
-        media_bytes = download_file(token, selected_post["media"]["id"])
-        os.makedirs("temp", exist_ok=True)
-        media_path = os.path.join("temp", selected_post["media"]["name"])
-
-        with open(media_path, "wb") as f:
-            f.write(media_bytes)
-
-        print(f"Media saved to: {media_path}")
-        print(f"Media size: {len(media_bytes)} bytes\n")
-
-        if media_kind == "video":
-            print("Step 5b: Ensuring video is H.264 (transcode if needed)...")
-            media_path = ensure_h264(media_path)
-            print()
-
-        if media_kind == "video":
-            # Videos are uploaded directly to Instagram and Facebook as bytes,
-            # so WordPress hosting (which blocks their video fetchers) is skipped.
-            print("Step 6: Skipping WordPress upload for video (sent directly to Instagram/Facebook).\n")
-            media_url = None
-        else:
-            print("Step 5c: Normalizing image for Instagram (sRGB JPEG)...")
-            media_path = ensure_ig_image(media_path)
-
-            # Prefer imgbb — Instagram reliably fetches it. Fall back to
-            # WordPress when no imgbb key is set or the upload fails.
-            media_url = upload_to_imgbb(media_path)
-            if media_url:
-                print(f"Step 6: Hosted image on imgbb: {media_url}")
+        pool = matched
+        if want_kind:
+            same_kind = [m for m in matched if m["kind"] == want_kind]
+            if same_kind:
+                pool = same_kind
             else:
-                print("Step 6: Uploading media to WordPress Media Library...")
-                media_result = upload_media(Path(media_path))
-                media_url = media_result.get("source_url")
-                if not media_url:
-                    raise RuntimeError("WordPress media upload did not return source_url.")
-                print(f"WordPress source_url: {media_url}")
-            print()
+                print(f"No {want_kind} asset available in the queue; falling back to any kind.")
 
-        print("Step 7: Generating caption with OpenAI (from media content)...")
-        content_images = get_caption_image_uris(media_path, media_kind)
-        if content_images:
-            print(f"Analyzing {len(content_images)} image(s) from the media for the caption.")
-        else:
-            print("No media images available; using filename brief only.")
-        caption = generate_caption(brief_text, image_uris=content_images)
-        print("Caption generated.\n")
-
-        print("Generated caption:")
-        print(caption)
-        print()
-
-        if DRY_RUN:
-            print("DRY_RUN=true, skipping Instagram publish.")
-            sys.exit(0)
-
-        print("Step 8: Publishing to Instagram...")
-        publish_result = publish_instagram_post(media_url, caption, media_kind, media_path=media_path)
-        print("Instagram publish completed.\n")
-
-        print("Publish result:")
-        print(f"creation_id: {publish_result['creation_id']}")
-        print(f"media_id   : {publish_result['media_id']}")
-        print()
-
-        if FB_PUBLISH_ENABLED:
-            print("Step 8b: Cross-posting to Facebook Page...")
-            try:
-                fb_result = publish_facebook_post(media_url, caption, media_kind, media_path=media_path)
-                print(f"Facebook post published: {fb_result}\n")
-            except Exception as fb_error:
-                # Instagram already succeeded; a Facebook failure must not fail
-                # the run. Surface it via logs and a non-fatal alert instead.
-                print(f"WARNING: Facebook cross-post failed (Instagram already succeeded): {fb_error}\n")
-                send_alert_safely(
-                    "Reborn Auto Publisher: Facebook cross-post failed (post)",
-                    "\n".join([
-                        "Instagram post succeeded but the Facebook cross-post failed.",
-                        f"Media: {selected_post['media']['name']}",
-                        f"Error: {fb_error}",
-                        "",
-                        "Please check GitHub Actions logs. The Instagram post was published normally.",
-                    ]),
-                )
-
-        print("Step 9: Archiving success item to posted/posts...")
-        archive_result = archive_post_assets(token, selected_post, success=True)
-        print("Archive completed.")
-        print(f"Moved to: {archive_result['target_folder']}")
-        print(f"Media: {archive_result['media_name']}")
-        print()
-
-        print("Post MVP completed successfully.")
-        sys.exit(0)
-
-    except Exception as e:
-        print("\nERROR:", str(e))
-        archive_status = "No archive attempted."
-
-        if token and selected_post:
-            try:
-                print("\nStep X: Archiving failed items to failed/posts...")
-                archive_result = archive_post_assets(token, selected_post, success=False)
-                print("Failed asset archive completed.")
-                print(f"Moved to: {archive_result['target_folder']}")
-                print(f"Media: {archive_result['media_name']}")
-                archive_status = (
-                    "Failed asset archive completed. "
-                    f"Moved to {archive_result['target_folder']}. "
-                    f"Media: {archive_result['media_name']}."
-                )
-            except Exception as archive_error:
-                print("Failed to archive failed items:", str(archive_error))
-                archive_status = f"Failed to archive failed item: {archive_error}"
-
-        failed_media_name = (
-            selected_post["media"]["name"]
-            if selected_post and selected_post.get("media")
-            else "not available"
+        first = pick_with_variety(pool, recent_groups, random)
+        print(
+            f"{len(matched)} feed asset(s) available ({len(pool)} matching '{want_kind or 'any'}'); "
+            f"avoided recent {sorted(recent_groups) or 'none'}; selected {first['media']['name']}."
         )
+
+        # Try the variety pick, then fall back to other assets (videos first) so a
+        # single bad asset never leaves the run with nothing published.
+        candidates = order_publish_candidates(matched, first, random)[:MAX_PUBLISH_ATTEMPTS]
+
+        failures = []
+        for idx, selected_post in enumerate(candidates):
+            if idx > 0:
+                print(
+                    f"\nPrevious asset failed; falling back to candidate {idx + 1}/{len(candidates)} "
+                    f"(prefer video): {selected_post['media']['name']} (kind: {selected_post['kind']})\n"
+                )
+            try:
+                attempt_publish(token, selected_post)
+                print("Post MVP completed successfully.")
+                sys.exit(0)
+            except Exception as attempt_error:
+                print("\nERROR:", str(attempt_error))
+                failed_name = selected_post["media"]["name"]
+                try:
+                    print("Archiving failed item to failed/posts...")
+                    archive_result = archive_post_assets(token, selected_post, success=False)
+                    print(f"Failed asset archived. Moved to: {archive_result['target_folder']}")
+                    failures.append(f"{failed_name}: {attempt_error}")
+                except Exception as archive_error:
+                    print("Failed to archive failed item:", str(archive_error))
+                    failures.append(f"{failed_name}: {attempt_error} (archive also failed: {archive_error})")
+
+        # Every candidate we tried failed. Surface the whole set in one alert.
         send_alert_safely(
             "Reborn IG Auto Publisher Failed: post",
             "\n".join([
-                "Instagram Post publishing failed.",
-                f"Failed media: {failed_media_name}",
-                f"Error: {e}",
-                f"Archive status: {archive_status}",
+                f"Instagram Post publishing failed after trying {len(candidates)} asset(s).",
+                "",
+                "Attempts:",
+                *[f"  - {f}" for f in failures],
                 "",
                 "Please check GitHub Actions logs and the OneDrive failed/posts folder.",
             ]),
         )
+        sys.exit(1)
 
+    except Exception as e:
+        print("\nERROR:", str(e))
+        send_alert_safely(
+            "Reborn IG Auto Publisher Failed: post",
+            "\n".join([
+                "Instagram Post publishing failed before any asset could be tried.",
+                f"Error: {e}",
+                "",
+                "Please check GitHub Actions logs.",
+            ]),
+        )
         sys.exit(1)
 
 

@@ -52,12 +52,23 @@ on:
         required: false
         default: ""
         type: string
+      preferred_kind:
+        description: "Force this post's media kind (post only; blank = follow grid pattern)"
+        required: false
+        default: ""
+        type: choice
+        options:
+          - ""
+          - video
+          - photo
   schedule:
-    - cron: "10 23 * * *"
-    - cron: "10 1 * * *"
-    - cron: "10 3 * * *"
-    - cron: "10 7 * * *"
-    - cron: "10 11 * * *"
+    # 5 daily feed posts, all in Brisbane (AEST, UTC+10) prime-engagement windows.
+    # Times are UTC; Brisbane = UTC + 10h.
+    - cron: "30 21 * * *"   # 07:30 Brisbane (morning scroll)
+    - cron: "30 2 * * *"    # 12:30 Brisbane (lunch)
+    - cron: "30 7 * * *"    # 17:30 Brisbane (after work)
+    - cron: "30 9 * * *"    # 19:30 Brisbane (evening prime)
+    - cron: "0 11 * * *"    # 21:00 Brisbane (night scroll)
     - cron: "0 3 * * 1"
     - cron: "30 15 * * 0"
     - cron: "30 22 * * *"
@@ -102,6 +113,8 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
           IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
+          FEED_PATTERN: ${{ secrets.FEED_PATTERN }}
+          PREFERRED_KIND: ${{ inputs.preferred_kind }}
           META_APP_ID: ${{ secrets.META_APP_ID }}
           META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
@@ -170,6 +183,8 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
           IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
+          FEED_PATTERN: ${{ secrets.FEED_PATTERN }}
+          PREFERRED_KIND: ${{ inputs.preferred_kind }}
           META_APP_ID: ${{ secrets.META_APP_ID }}
           META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
