@@ -140,7 +140,7 @@ def filename_to_brief(filename):
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print('Usage: python asset_helpers.py "anti-wrinkle-consultation.jpg"')
+        print('Usage: python asset_helpers.py "signature-facial.jpg"')
         sys.exit(1)
 
     filename = sys.argv[1]
