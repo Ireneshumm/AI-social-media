@@ -37,9 +37,17 @@ def get_media_kind(filename):
 # only auto-generated content and keep the user's own uploads forever.
 AI_GENERATED_PREFIX = "ai_"
 
+# Repurposed (TikTok/IG) videos carry this prefix. They are 9:16 but should be
+# published as permanent Reels (feed), not as 24-hour Stories.
+REPOST_PREFIX = "repost_"
+
 
 def is_ai_generated(filename):
     return bool(filename) and Path(filename).name.lower().startswith(AI_GENERATED_PREFIX)
+
+
+def is_repost(filename):
+    return bool(filename) and Path(filename).name.lower().startswith(REPOST_PREFIX)
 
 
 def get_item_dimensions(item):
@@ -74,6 +82,9 @@ def is_story_media(item):
     fall back to the generator's filename marker ("_story_"); anything else
     defaults to feed. Always returns a bool so the story/feed split is exclusive
     and total — every file is claimed by exactly one channel."""
+    # Repurposed clips are 9:16 but go out as permanent Reels, never Stories.
+    if is_repost(item.get("name") or ""):
+        return False
     vertical = is_vertical_item(item)
     if vertical is not None:
         return vertical
