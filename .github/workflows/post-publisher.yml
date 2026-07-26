@@ -101,6 +101,7 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+          IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
           META_APP_ID: ${{ secrets.META_APP_ID }}
           META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
@@ -168,6 +169,7 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+          IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
           META_APP_ID: ${{ secrets.META_APP_ID }}
           META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
