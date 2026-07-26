@@ -225,6 +225,40 @@ def download_file(token, file_id):
     return graph_get_bytes(url, token)
 
 
+def ensure_ig_image(path):
+    """Re-encode an image to a clean 8-bit sRGB JPEG within Instagram's limits.
+
+    Instagram rejects CMYK / odd-profile / oversized images with 'Only photo or
+    video can be accepted as media type' (error 2207052) even though they open
+    fine in a browser — a common trait of photos exported from pro cameras or
+    Photoshop. AI-generated images are already clean RGB, but user uploads may
+    not be. Converting to RGB and capping the long side makes every image
+    reliably fetchable and acceptable. Falls back to the original on any error."""
+    try:
+        from PIL import Image
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING: Pillow unavailable ({e}); skipping image normalize.")
+        return path
+    try:
+        with Image.open(path) as img:
+            img = img.convert("RGB")  # drops alpha/CMYK/palette -> 8-bit sRGB
+            max_side = 1440           # Instagram's max supported width
+            width, height = img.size
+            if max(width, height) > max_side:
+                scale = max_side / float(max(width, height))
+                img = img.resize(
+                    (max(1, round(width * scale)), max(1, round(height * scale))),
+                    Image.LANCZOS,
+                )
+            out = os.path.splitext(path)[0] + "_ig.jpg"
+            img.save(out, "JPEG", quality=90)
+        print(f"Normalized image for Instagram: {out} ({os.path.getsize(out)} bytes)")
+        return out
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING: image normalize failed ({e}); using original file.")
+        return path
+
+
 # =========================
 # Folder / archive helpers
 # =========================
@@ -749,6 +783,8 @@ def main():
             print("Step 6: Skipping WordPress upload for video (sent directly to Instagram/Facebook).\n")
             media_url = None
         else:
+            print("Step 5c: Normalizing image for Instagram (sRGB JPEG)...")
+            media_path = ensure_ig_image(media_path)
             print("Step 6: Uploading media to WordPress Media Library...")
             media_result = upload_media(Path(media_path))
             media_url = media_result.get("source_url")
