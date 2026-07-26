@@ -31,6 +31,7 @@ Subtitle-removal tuning (env):
 """
 import glob
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime
@@ -103,7 +104,19 @@ def run(cmd):
 # =========================
 # Download (no watermark) via yt-dlp
 # =========================
+def extract_url(text):
+    """Pull the first http(s) link out of a share string. TikTok/Douyin/IG
+    'copy link' often yields a whole promo blob (e.g. Douyin's "6.10 复制打开抖音…
+    https://v.douyin.com/xxx/ …") rather than a bare URL, which yt-dlp rejects.
+    Grabbing the embedded URL makes those work without touching the shortcut."""
+    if not text:
+        return text
+    match = re.search(r"https?://[^\s]+", text)
+    return match.group(0) if match else text.strip()
+
+
 def download_video(url):
+    url = extract_url(url)
     os.makedirs("dl", exist_ok=True)
     for old in glob.glob("dl/*"):
         try:
