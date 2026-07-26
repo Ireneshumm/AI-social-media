@@ -53,6 +53,14 @@ DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
 # up to this many total attempts, so a run almost always publishes something.
 MAX_PUBLISH_ATTEMPTS = int(os.getenv("MAX_PUBLISH_ATTEMPTS", "4"))
 
+# Repeating video/photo layout for the Instagram profile grid. The default of
+# video, video, photo produces a 2-videos-to-1-photo grid. The position advances
+# with each published feed post. Override via the FEED_PATTERN env var (a
+# comma-separated list, e.g. "video,video,photo").
+FEED_PATTERN = [
+    k.strip() for k in (os.getenv("FEED_PATTERN") or "video,video,photo").split(",") if k.strip()
+]
+
 # Video containers are processed asynchronously by Instagram, so we poll the
 # container status before publishing. Defaults give up to ~5 minutes.
 VIDEO_POLL_MAX_ATTEMPTS = int(os.getenv("VIDEO_POLL_MAX_ATTEMPTS", "30"))
@@ -387,6 +395,17 @@ def archive_post_assets(token, selected_post, success=True):
 # =========================
 # Asset matching
 # =========================
+def _normalize_kind(value):
+    """Map user-facing kind words to the internal kind labels ('video'/'image').
+    Returns '' for anything unrecognized (meaning: no kind preference)."""
+    v = (value or "").strip().lower()
+    if v in ("video", "videos", "reel", "reels", "vid"):
+        return "video"
+    if v in ("photo", "photos", "image", "images", "img", "picture", "pic"):
+        return "image"
+    return ""
+
+
 def match_post_assets(items):
     # A single drop folder feeds both channels: tall/vertical (9:16) media is
     # reserved for Stories, so feed posting takes everything that is NOT vertical
@@ -901,19 +920,49 @@ def main():
             print("No valid feed post assets found. Exit gracefully.")
             sys.exit(0)
 
-        # Steer away from the kinds of content most recently posted, then pick at
-        # random among the rest, so the feed rotates through different treatments
-        # instead of repeating the same theme or draining in upload order.
+        # Steer away from the kinds of content most recently posted, and count how
+        # many feed posts we have published so far so the grid can follow a fixed
+        # video/photo layout pattern.
         recent_groups = set()
+        posted_count = 0
         try:
             posted_sub = get_subfolder_by_path(token, ONEDRIVE_POSTED_FOLDER_NAME, ONEDRIVE_POSTS_FOLDER_NAME)
-            recent_groups = recent_content_groups(get_folder_children(token, posted_sub["id"]), n=2)
+            posted_children = get_folder_children(token, posted_sub["id"])
+            recent_groups = recent_content_groups(posted_children, n=2)
+            posted_count = sum(
+                1 for it in posted_children
+                if "folder" not in it and is_supported_media_file(it.get("name", ""))
+            )
         except Exception as e:
-            print(f"Variety history unavailable ({e}); selecting at random.")
-        first = pick_with_variety(matched, recent_groups, random)
+            print(f"Variety/pattern history unavailable ({e}); selecting at random.")
+
+        # Decide the media kind for this run so the Instagram profile grid follows
+        # the desired repeating layout (default 2 videos : 1 photo). The position
+        # advances with every published post, producing V, V, P, V, V, P, ...
+        # A manual PREFERRED_KIND overrides the pattern (handy for one-off tests).
+        want_kind = _normalize_kind(os.getenv("PREFERRED_KIND"))
+        if want_kind:
+            print(f"PREFERRED_KIND override: targeting a {want_kind} post this run.")
+        elif FEED_PATTERN:
+            pos = posted_count % len(FEED_PATTERN)
+            want_kind = _normalize_kind(FEED_PATTERN[pos])
+            print(
+                f"Feed grid pattern {FEED_PATTERN}: position {pos} -> {want_kind or 'any'} "
+                f"({posted_count} post(s) already published)."
+            )
+
+        pool = matched
+        if want_kind:
+            same_kind = [m for m in matched if m["kind"] == want_kind]
+            if same_kind:
+                pool = same_kind
+            else:
+                print(f"No {want_kind} asset available in the queue; falling back to any kind.")
+
+        first = pick_with_variety(pool, recent_groups, random)
         print(
-            f"{len(matched)} feed asset(s) available; avoided recent {sorted(recent_groups) or 'none'}; "
-            f"selected {first['media']['name']}."
+            f"{len(matched)} feed asset(s) available ({len(pool)} matching '{want_kind or 'any'}'); "
+            f"avoided recent {sorted(recent_groups) or 'none'}; selected {first['media']['name']}."
         )
 
         # Try the variety pick, then fall back to other assets (videos first) so a
