@@ -66,6 +66,42 @@ def contains_banned_terms(text):
     return bool(_BANNED_RE.search(text))
 
 
+# Filename markers of AI-generated (or named) assets that promote a prohibited
+# injectable/peptide treatment. Used to keep such assets out of the publish queue
+# (e.g. anti-wrinkle ads generated before the injectable topics were removed).
+_BANNED_FILENAME_MARKERS = [
+    "anti_wrinkle",
+    "antiwrinkle",
+    "anti-wrinkle",
+    "wrinkle",
+    "botox",
+    "dysport",
+    "xeomin",
+    "botulinum",
+    "dermal_filler",
+    "dermalfiller",
+    "filler",
+    "injectable",
+    "injector",
+    "injection",
+    "skin_booster",
+    "skinbooster",
+    "bio_remodel",
+    "bioremodel",
+    "bioremodelling",
+    "profhilo",
+    "peptide",
+]
+
+
+def filename_is_noncompliant(filename):
+    """True if a media filename indicates a prohibited injectable/peptide asset."""
+    if not filename:
+        return False
+    name = filename.lower()
+    return any(marker in name for marker in _BANNED_FILENAME_MARKERS)
+
+
 def scrub_caption(text):
     """Last-resort safety net: strip banned wording from a finished caption and
     tidy the whitespace/punctuation left behind. Prompts should prevent this

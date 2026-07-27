@@ -22,7 +22,7 @@ from alert_email import send_alert_safely
 from facebook_publish import publish_facebook_post, FB_PUBLISH_ENABLED
 from video_transcode import ensure_h264
 from media_analysis import get_caption_image_uris
-from compliance import COMPLIANCE_RULES, scrub_caption
+from compliance import COMPLIANCE_RULES, scrub_caption, filename_is_noncompliant
 from image_hosting import upload_to_imgbb
 
 load_dotenv()
@@ -386,6 +386,11 @@ def match_post_assets(items):
         if not is_supported_media_file(name):
             continue
         if is_story_media(item):
+            continue
+        # Compliance safety net: never publish an injectable/peptide asset, even
+        # if one is still sitting in the queue (TGA — see compliance.py).
+        if filename_is_noncompliant(name):
+            print(f"Skipping non-compliant asset (injectable/peptide): {name}")
             continue
 
         matched.append({
