@@ -25,6 +25,7 @@ from facebook_publish import publish_facebook_story, FB_PUBLISH_ENABLED
 from video_transcode import ensure_h264
 from media_analysis import get_caption_image_uris
 from compliance import COMPLIANCE_RULES, scrub_caption
+from image_hosting import upload_to_imgbb
 
 load_dotenv()
 
@@ -812,15 +813,18 @@ def main():
             print("Step 6: Skipping WordPress upload for video (sent directly to Instagram/Facebook).\n")
             media_url = None
         else:
-            print("Step 6: Uploading media to WordPress Media Library...")
-            media_result = upload_media(Path(media_path))
-            media_url = media_result.get("source_url")
-
-            if not media_url:
-                raise RuntimeError("WordPress media upload did not return source_url.")
-
-            print("WordPress source_url:")
-            print(media_url)
+            # Prefer imgbb — Instagram reliably fetches it. Fall back to
+            # WordPress when no imgbb key is set or the upload fails.
+            media_url = upload_to_imgbb(media_path)
+            if media_url:
+                print(f"Step 6: Hosted image on imgbb: {media_url}")
+            else:
+                print("Step 6: Uploading media to WordPress Media Library...")
+                media_result = upload_media(Path(media_path))
+                media_url = media_result.get("source_url")
+                if not media_url:
+                    raise RuntimeError("WordPress media upload did not return source_url.")
+                print(f"WordPress source_url: {media_url}")
             print()
 
         print("Step 7: Generating story caption with OpenAI (from media content)...")
