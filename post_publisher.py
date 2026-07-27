@@ -23,6 +23,7 @@ from facebook_publish import publish_facebook_post, FB_PUBLISH_ENABLED
 from video_transcode import ensure_h264
 from media_analysis import get_caption_image_uris
 from compliance import COMPLIANCE_RULES, scrub_caption
+from image_hosting import upload_to_imgbb
 
 load_dotenv()
 
@@ -270,41 +271,6 @@ def ensure_ig_image(path):
     except Exception as e:  # noqa: BLE001
         print(f"WARNING: image normalize failed ({e}); using original file.")
         return path
-
-
-def upload_to_imgbb(image_path):
-    """Host an image on imgbb and return its direct URL — a public URL that
-    Instagram can reliably fetch. WordPress can serve images to a browser but
-    still block Instagram's image scraper ('media could not be fetched'), which
-    breaks photo posts; imgbb doesn't. Returns None if no IMGBB_API_KEY is set
-    or the upload fails, so callers fall back to WordPress."""
-    key = os.getenv("IMGBB_API_KEY")
-    if not key or not key.strip():
-        return None
-    import base64
-
-    with open(image_path, "rb") as f:
-        encoded = base64.b64encode(f.read()).decode("ascii")
-    try:
-        resp = requests.post(
-            "https://api.imgbb.com/1/upload",
-            data={
-                "key": key.strip(),
-                "image": encoded,
-                "name": os.path.splitext(os.path.basename(image_path))[0],
-                "expiration": 604800,  # auto-delete after 7 days; IG fetches immediately
-            },
-            timeout=90,
-        )
-        resp.raise_for_status()
-        data = resp.json().get("data", {})
-        url = data.get("url") or data.get("display_url")
-        if not url:
-            raise RuntimeError(f"imgbb response had no url: {str(resp.text)[:200]}")
-        return url
-    except Exception as e:  # noqa: BLE001
-        print(f"WARNING: imgbb upload failed ({e}); will fall back to WordPress.")
-        return None
 
 
 # =========================
