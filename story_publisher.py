@@ -59,6 +59,11 @@ DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
 VIDEO_POLL_MAX_ATTEMPTS = int(os.getenv("VIDEO_POLL_MAX_ATTEMPTS", "30"))
 VIDEO_POLL_INTERVAL = int(os.getenv("VIDEO_POLL_INTERVAL", "10"))
 
+# How many stories to publish per run. GitHub only fires the hourly Story
+# schedule ~10-12 times a day, so publishing more than one per run is how we
+# reach the higher weekly Story targets. Override via the STORIES_PER_RUN env var.
+STORIES_PER_RUN = int((os.getenv("STORIES_PER_RUN") or "2").strip() or "2")
+
 AUTHORITY = f"https://login.microsoftonline.com/{MS_TENANT_ID}"
 SCOPES = ["https://graph.microsoft.com/.default"]
 GRAPH_BASE = f"https://graph.facebook.com/{GRAPH_VERSION}"
@@ -742,8 +747,121 @@ def ensure_story_image(path):
 # =========================
 # Main flow
 # =========================
+def publish_one_story(token, selected_story):
+    """Full download -> host -> caption -> publish -> archive flow for a single
+    story. Returns the Instagram publish result on success; raises on failure so
+    the caller can archive the failed asset and move on to the next one."""
+    media_kind = selected_story["kind"]
+    print(f"Selected story: {selected_story['base_name']}")
+    print(f"Media file: {selected_story['media']['name']} (kind: {media_kind})\n")
+
+    print("Step 4: Generating brief from media filename...")
+    brief_text = filename_to_brief(selected_story["media"]["name"])
+
+    if not brief_text:
+        raise Exception("Brief text is empty.")
+
+    print("Generated brief text:")
+    print(brief_text)
+    print()
+
+    print("Step 5: Downloading media file for local verification...")
+    media_bytes = download_file(token, selected_story["media"]["id"])
+    os.makedirs("temp", exist_ok=True)
+    media_path = os.path.join("temp", selected_story["media"]["name"])
+
+    with open(media_path, "wb") as f:
+        f.write(media_bytes)
+
+    print(f"Media saved to: {media_path}")
+    print(f"Media size: {len(media_bytes)} bytes\n")
+
+    if media_kind == "video":
+        print("Step 5b: Ensuring video is H.264 (transcode if needed)...")
+        media_path = ensure_h264(media_path)
+        print()
+    else:
+        print("Step 5b: Fitting image to a 1080x1920 story canvas (no crop / no squish)...")
+        media_path = ensure_story_image(media_path)
+        print()
+
+    if media_kind == "video":
+        # Videos go straight to Instagram/Facebook as bytes, so WordPress
+        # hosting (which blocks their video fetchers) is skipped.
+        print("Step 6: Skipping WordPress upload for video (sent directly to Instagram/Facebook).\n")
+        media_url = None
+    else:
+        # Prefer imgbb — Instagram reliably fetches it. Fall back to
+        # WordPress when no imgbb key is set or the upload fails.
+        media_url = upload_to_imgbb(media_path)
+        if media_url:
+            print(f"Step 6: Hosted image on imgbb: {media_url}")
+        else:
+            print("Step 6: Uploading media to WordPress Media Library...")
+            media_result = upload_media(Path(media_path))
+            media_url = media_result.get("source_url")
+            if not media_url:
+                raise RuntimeError("WordPress media upload did not return source_url.")
+            print(f"WordPress source_url: {media_url}")
+        print()
+
+    print("Step 7: Generating story caption with OpenAI (from media content)...")
+    content_images = get_caption_image_uris(media_path, media_kind)
+    if content_images:
+        print(f"Analyzing {len(content_images)} image(s) from the media for the caption.")
+    else:
+        print("No media images available; using filename brief only.")
+    caption = generate_story_caption(brief_text, image_uris=content_images)
+    print("Story caption generated.\n")
+
+    print("Generated story caption:")
+    print(caption)
+    print()
+
+    if DRY_RUN:
+        print("DRY_RUN=true, skipping Instagram Story publish.")
+        sys.exit(0)
+
+    print("Step 8: Publishing to Instagram Story...")
+    publish_result = publish_instagram_story(media_url, caption, media_kind, media_path=media_path)
+    print("Instagram Story publish completed.\n")
+
+    print("Publish result:")
+    print(f"creation_id: {publish_result['creation_id']}")
+    print(f"media_id   : {publish_result['media_id']}")
+    print()
+
+    if FB_PUBLISH_ENABLED:
+        print("Step 8b: Cross-posting to Facebook Story...")
+        try:
+            fb_result = publish_facebook_story(media_url, media_kind, media_path=media_path)
+            print(f"Facebook story published: {fb_result}\n")
+        except Exception as fb_error:
+            # Instagram already succeeded; a Facebook failure must not fail
+            # the story. Surface it via logs and a non-fatal alert instead.
+            print(f"WARNING: Facebook cross-post failed (Instagram already succeeded): {fb_error}\n")
+            send_alert_safely(
+                "Reborn Auto Publisher: Facebook cross-post failed (story)",
+                "\n".join([
+                    "Instagram story succeeded but the Facebook cross-post failed.",
+                    f"Media: {selected_story['media']['name']}",
+                    f"Error: {fb_error}",
+                    "",
+                    "Please check GitHub Actions logs. The Instagram story was published normally.",
+                ]),
+            )
+
+    print("Step 9: Archiving success item to posted/stories...")
+    archive_result = archive_story_assets(token, selected_story, success=True)
+    print("Archive completed.")
+    print(f"Moved to: {archive_result['target_folder']}")
+    print(f"Media: {archive_result['media_name']}")
+    print()
+
+    return publish_result
+
+
 def main():
-    selected_story = None
     token = None
 
     try:
@@ -765,166 +883,82 @@ def main():
             print("No valid vertical story assets found. Exit gracefully.")
             sys.exit(0)
 
-        # Steer away from the kinds of content most recently posted, then pick at
-        # random among the rest, for day-to-day variety.
+        # Steer away from the kinds of content most recently posted, for day-to-day
+        # variety.
         recent_groups = set()
         try:
             posted_sub = get_subfolder_by_path(token, ONEDRIVE_POSTED_FOLDER_NAME, ONEDRIVE_STORIES_FOLDER_NAME)
             recent_groups = recent_content_groups(get_folder_children(token, posted_sub["id"]), n=2)
         except Exception as e:
             print(f"Variety history unavailable ({e}); selecting at random.")
-        selected_story = pick_with_variety(matched, recent_groups, random)
-        media_kind = selected_story["kind"]
-        print(
-            f"{len(matched)} story asset(s) available; avoided recent {sorted(recent_groups) or 'none'}; "
-            f"selected {selected_story['media']['name']}."
-        )
-        print(f"Selected story: {selected_story['base_name']}")
-        print(f"Media file: {selected_story['media']['name']} (kind: {media_kind})\n")
 
-        print("Step 4: Generating brief from media filename...")
-        brief_text = filename_to_brief(selected_story["media"]["name"])
+        # Publish several stories per run. GitHub only fires the hourly schedule
+        # ~10-12 times a day, so posting more than one story per run is how we
+        # comfortably reach the higher weekly Story targets. Each story is a
+        # distinct asset and is published independently — one failing never stops
+        # the others.
+        target = max(1, STORIES_PER_RUN)
+        print(f"{len(matched)} story asset(s) available; aiming to publish up to {target} this run.\n")
 
-        if not brief_text:
-            raise Exception("Brief text is empty.")
-
-        print("Generated brief text:")
-        print(brief_text)
-        print()
-
-        print("Step 5: Downloading media file for local verification...")
-        media_bytes = download_file(token, selected_story["media"]["id"])
-        os.makedirs("temp", exist_ok=True)
-        media_path = os.path.join("temp", selected_story["media"]["name"])
-
-        with open(media_path, "wb") as f:
-            f.write(media_bytes)
-
-        print(f"Media saved to: {media_path}")
-        print(f"Media size: {len(media_bytes)} bytes\n")
-
-        if media_kind == "video":
-            print("Step 5b: Ensuring video is H.264 (transcode if needed)...")
-            media_path = ensure_h264(media_path)
-            print()
-        else:
-            print("Step 5b: Fitting image to a 1080x1920 story canvas (no crop / no squish)...")
-            media_path = ensure_story_image(media_path)
-            print()
-
-        if media_kind == "video":
-            # Videos go straight to Instagram/Facebook as bytes, so WordPress
-            # hosting (which blocks their video fetchers) is skipped.
-            print("Step 6: Skipping WordPress upload for video (sent directly to Instagram/Facebook).\n")
-            media_url = None
-        else:
-            # Prefer imgbb — Instagram reliably fetches it. Fall back to
-            # WordPress when no imgbb key is set or the upload fails.
-            media_url = upload_to_imgbb(media_path)
-            if media_url:
-                print(f"Step 6: Hosted image on imgbb: {media_url}")
-            else:
-                print("Step 6: Uploading media to WordPress Media Library...")
-                media_result = upload_media(Path(media_path))
-                media_url = media_result.get("source_url")
-                if not media_url:
-                    raise RuntimeError("WordPress media upload did not return source_url.")
-                print(f"WordPress source_url: {media_url}")
-            print()
-
-        print("Step 7: Generating story caption with OpenAI (from media content)...")
-        content_images = get_caption_image_uris(media_path, media_kind)
-        if content_images:
-            print(f"Analyzing {len(content_images)} image(s) from the media for the caption.")
-        else:
-            print("No media images available; using filename brief only.")
-        caption = generate_story_caption(brief_text, image_uris=content_images)
-        print("Story caption generated.\n")
-
-        print("Generated story caption:")
-        print(caption)
-        print()
-
-        if DRY_RUN:
-            print("DRY_RUN=true, skipping Instagram Story publish.")
-            sys.exit(0)
-
-        print("Step 8: Publishing to Instagram Story...")
-        publish_result = publish_instagram_story(media_url, caption, media_kind, media_path=media_path)
-        print("Instagram Story publish completed.\n")
-
-        print("Publish result:")
-        print(f"creation_id: {publish_result['creation_id']}")
-        print(f"media_id   : {publish_result['media_id']}")
-        print()
-
-        if FB_PUBLISH_ENABLED:
-            print("Step 8b: Cross-posting to Facebook Story...")
+        published = 0
+        failures = []
+        used_ids = set()
+        for slot in range(target):
+            remaining = [m for m in matched if m["media"]["id"] not in used_ids]
+            if not remaining:
+                print(f"No more distinct story assets available; stopping at {published}.")
+                break
+            selected_story = pick_with_variety(remaining, recent_groups, random)
+            used_ids.add(selected_story["media"]["id"])
+            print(f"===== Story {slot + 1}/{target}: {selected_story['media']['name']} =====")
             try:
-                fb_result = publish_facebook_story(media_url, media_kind, media_path=media_path)
-                print(f"Facebook story published: {fb_result}\n")
-            except Exception as fb_error:
-                # Instagram already succeeded; a Facebook failure must not fail
-                # the run. Surface it via logs and a non-fatal alert instead.
-                print(f"WARNING: Facebook cross-post failed (Instagram already succeeded): {fb_error}\n")
-                send_alert_safely(
-                    "Reborn Auto Publisher: Facebook cross-post failed (story)",
-                    "\n".join([
-                        "Instagram story succeeded but the Facebook cross-post failed.",
-                        f"Media: {selected_story['media']['name']}",
-                        f"Error: {fb_error}",
-                        "",
-                        "Please check GitHub Actions logs. The Instagram story was published normally.",
-                    ]),
-                )
+                publish_one_story(token, selected_story)
+                published += 1
+            except SystemExit:
+                raise
+            except Exception as story_error:
+                print("\nERROR:", str(story_error))
+                failures.append(f"{selected_story['media']['name']}: {story_error}")
+                try:
+                    print("Archiving failed item to failed/stories...")
+                    archive_result = archive_story_assets(token, selected_story, success=False)
+                    print(f"Failed asset archived. Moved to: {archive_result['target_folder']}")
+                except Exception as archive_error:
+                    print("Failed to archive failed item:", str(archive_error))
 
-        print("Step 9: Archiving success item to posted/stories...")
-        archive_result = archive_story_assets(token, selected_story, success=True)
-        print("Archive completed.")
-        print(f"Moved to: {archive_result['target_folder']}")
-        print(f"Media: {archive_result['media_name']}")
-        print()
+        if published == 0:
+            # Every asset we tried failed. Surface them all in one alert.
+            send_alert_safely(
+                "Reborn IG Auto Publisher Failed: story",
+                "\n".join([
+                    f"Instagram Story publishing failed after trying {len(failures)} asset(s).",
+                    "",
+                    "Attempts:",
+                    *[f"  - {f}" for f in failures],
+                    "",
+                    "Please check GitHub Actions logs and the OneDrive failed/stories folder.",
+                ]),
+            )
+            sys.exit(1)
 
-        print("Story MVP completed successfully.")
+        if failures:
+            print(f"Published {published} story(ies); {len(failures)} asset(s) failed and were archived.")
+        print(f"Story run completed successfully: {published} story(ies) published.")
         sys.exit(0)
 
+    except SystemExit:
+        raise
     except Exception as e:
         print("\nERROR:", str(e))
-        archive_status = "No archive attempted."
-
-        if token and selected_story:
-            try:
-                print("\nStep X: Archiving failed items to failed/stories...")
-                archive_result = archive_story_assets(token, selected_story, success=False)
-                print("Failed asset archive completed.")
-                print(f"Moved to: {archive_result['target_folder']}")
-                print(f"Media: {archive_result['media_name']}")
-                archive_status = (
-                    "Failed asset archive completed. "
-                    f"Moved to {archive_result['target_folder']}. "
-                    f"Media: {archive_result['media_name']}."
-                )
-            except Exception as archive_error:
-                print("Failed to archive failed items:", str(archive_error))
-                archive_status = f"Failed to archive failed item: {archive_error}"
-
-        failed_media_name = (
-            selected_story["media"]["name"]
-            if selected_story and selected_story.get("media")
-            else "not available"
-        )
         send_alert_safely(
             "Reborn IG Auto Publisher Failed: story",
             "\n".join([
-                "Instagram Story publishing failed.",
-                f"Failed media: {failed_media_name}",
+                "Instagram Story publishing failed before any asset could be tried.",
                 f"Error: {e}",
-                f"Archive status: {archive_status}",
                 "",
-                "Please check GitHub Actions logs and the OneDrive failed/stories folder.",
+                "Please check GitHub Actions logs.",
             ]),
         )
-
         sys.exit(1)
 
 
