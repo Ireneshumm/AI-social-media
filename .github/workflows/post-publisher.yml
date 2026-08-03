@@ -245,7 +245,9 @@ jobs:
             PUBLISHER_TYPE="generate"
             export AD_FORMAT="story"
             export AD_TARGET_FOLDER="${ONEDRIVE_POSTS_FOLDER_NAME:-posts}"
-            export AD_COUNT="10"
+            # Publisher now posts ~2 stories per run, so generate more to keep the
+            # queue supplied and comfortably clear the weekly Story targets.
+            export AD_COUNT="16"
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             PUBLISHER_TYPE="${{ inputs.publisher_type }}"
           else
