@@ -81,23 +81,38 @@ FOOTER = {
 }
 TRUST_BAR = "EXPERT THERAPISTS   ·   ADVANCED TECHNOLOGY   ·   MEDICAL GRADE TREATMENTS"
 
-# Photographic direction. Two moods: a calm treatment/person shot, and a
-# device / technology close-up so the feed also showcases the clinic's gear.
+# Photographic direction, following the Reborn Aesthetics brand standard. A
+# shared realism + negative-constraint block keeps every image on-brand: ultra
+# photorealistic luxury-editorial look, real skin, correct real devices, and a
+# strict warm-neutral palette with no CGI / fantasy / neon / cool tones.
+_REALISM = (
+    "ultra photorealistic commercial beauty photography, luxury skincare campaign in the mood of "
+    "La Mer, Aesop and Rationale, magazine editorial quality, shot on a Sony A7R V with an 85mm lens "
+    "at f/2.8 with natural depth of field, warm natural golden-hour and soft window light, luxury spa "
+    "and boutique-hotel lighting, natural real skin texture with visible pores, warm cream, ivory, "
+    "champagne, warm brown and bronze palette with soft gold accents, generous negative space"
+)
+_NEGATIVE = (
+    "no text, no logo, no watermark, no CGI, no 3D render, no glowing, sci-fi or futuristic effects, "
+    "no plastic or over-smoothed skin, no fake AI face, no influencer face, no cartoon, anime or "
+    "illustration, no neon, no pink, no purple, no bright blue, no rainbow, no hospital white light, no flash"
+)
+
 BRAND_PHOTO_STYLE = (
-    "premium medical aesthetics clinic, luxury day spa atmosphere, calm Australian woman "
-    "aged 25 to 40 with natural healthy skin and a relaxed expression, eyes gently closed, "
-    "no posing, no looking at camera, fully clothed in a clean white spa robe or clinic gown, "
-    "modest, professional and strictly non-sexual clinical wellness context, warm cream ivory "
-    "and beige tones, soft golden window light, minimal elegant interior, editorial fashion "
-    "photography, tasteful and understated, Aesop and Jo Malone campaign mood, photorealistic, "
-    "no text, no logo, no watermark"
+    "premium medical aesthetics clinic in Brisbane, luxury boutique clinic atmosphere, a calm confident "
+    "Australian professional woman aged 25 to 40 with natural healthy skin and a relaxed, natural "
+    "expression, natural beauty, no exaggerated smile, no posing, no looking at camera, fully clothed and "
+    "modest in a clean clinic gown, strictly non-sexual clinical wellness context, minimal elegant "
+    "treatment room with cream walls and warm lighting, correct clinical technique with gloves and eye "
+    "protection where relevant, " + _REALISM + ", " + _NEGATIVE
 )
 
 DEVICE_PHOTO_STYLE = (
-    "elegant close-up product photography of a premium medical aesthetics device, sleek modern "
-    "clinical technology with a treatment handpiece, on a clean minimal bench in a luxury clinic, "
-    "warm cream ivory and beige tones, soft golden light, shallow depth of field, high-end brand "
-    "campaign look, Four Seasons spa mood, photorealistic, no text, no logo, no watermark, no people"
+    "elegant close-up product photography of the real, authentic medical aesthetics device exactly as the "
+    "genuine product looks, with correct proportions, correct buttons, correct screen, correct handpiece "
+    "and original branding, on a clean minimal bench in a luxury clinic treatment room with cream walls, "
+    "shallow depth of field, no people, do not redesign or reinvent the machine, do not invent accessories "
+    "or branding, " + _REALISM + ", " + _NEGATIVE
 )
 
 TOPICS = [
@@ -260,17 +275,20 @@ TOPICS = [
 
 # Per-topic device / technology scene, used when a generation renders the
 # machine-focused mood instead of a person. Falls back to a generic device shot.
+# Named with the clinic's REAL machines. Note: a text prompt cannot perfectly
+# reproduce a specific real device — for true accuracy, replace device close-ups
+# with real photos of the clinic's own machines (see the brand reference library).
 DEVICE_SCENES = {
-    "skin_needling": "a premium micro-needling / RF pen device resting on a clean clinical tray, handpiece in focus",
-    "tattoo_removal": "a premium pico laser tattoo-removal machine with handpiece, sleek control screen glowing softly",
-    "hifu": "a modern HIFU / ultrasound skin-tightening machine with handpiece and elegant control screen",
-    "facial": "a luxury facial steamer and serum bottles on a clean minimal clinic bench, elegant tools",
-    "pigmentation": "a pico / carbon laser device with handpiece, sleek dark panel and warm ambient light",
+    "skin_needling": "a real SkinPen microneedling pen resting on a sterile clinical tray, handpiece in focus",
+    "tattoo_removal": "a real Candela PicoWay picosecond laser system with its articulated arm and handpiece",
+    "hifu": "a real Ultherapy ultrasound skin-tightening system by Merz Aesthetics with its handpiece and screen",
+    "facial": "a real 6-in-1 hydrodermabrasion facial machine with serum bottles and wand tips on a clean bench",
+    "pigmentation": "a real Candela PicoWay laser system with handpiece, sleek dark panel and warm ambient light",
     "massage": "warm basalt massage stones, rolled towels and aromatherapy oils on a spa bench",
-    "laser": "a high-end aesthetic laser platform with handpiece and glowing touchscreen, dark sleek housing",
-    "ipl": "an IPL photofacial machine with handpiece and cooling tip, modern clinical technology",
-    "body_contouring": "a body-contouring / fat-freezing machine with applicators, sleek modern medical design",
-    "hydrafacial": "a HydraFacial machine with its spiral wand tip and serum vials, clean modern clinic bench",
+    "laser": "a real Candela PicoWay laser platform with handpiece and touchscreen, dark sleek housing",
+    "ipl": "a real Lumenis Stellar M22 IPL system with handpiece and cooling tip",
+    "body_contouring": "a professional body-contouring machine with applicators, sleek modern medical design",
+    "hydrafacial": "a real 6-in-1 hydrodermabrasion machine with spiral wand tips and serum vials on a clean bench",
 }
 
 
