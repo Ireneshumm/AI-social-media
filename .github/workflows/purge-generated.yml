@@ -1,0 +1,45 @@
+name: Reborn Purge Old AI-Generated Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      delete:
+        description: "Delete the old AI-generated images (ai_* files). Leave off to only report."
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  purge-generated:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Scan posts for AI-generated images
+        env:
+          PURGE_GENERATED_DELETE: ${{ inputs.delete }}
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+          ONEDRIVE_ROOT_PATH: ${{ secrets.ONEDRIVE_ROOT_PATH }}
+          ONEDRIVE_POSTS_FOLDER_NAME: ${{ secrets.ONEDRIVE_POSTS_FOLDER_NAME }}
+          ONEDRIVE_USER_EMAIL: ${{ secrets.ONEDRIVE_USER_EMAIL }}
+        run: python purge_generated.py
