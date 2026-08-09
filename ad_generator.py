@@ -22,7 +22,9 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 # `or` (not getenv default) so an unset secret injected as "" still falls back.
 IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL") or "gpt-image-1"
-IMAGE_QUALITY = os.getenv("OPENAI_IMAGE_QUALITY") or "medium"
+# "high" matches the quality ChatGPT produces (same underlying model). Costs
+# more per image than "medium"; override with the OPENAI_IMAGE_QUALITY secret.
+IMAGE_QUALITY = os.getenv("OPENAI_IMAGE_QUALITY") or "high"
 
 MS_TENANT_ID = os.getenv("MS_TENANT_ID")
 MS_CLIENT_ID = os.getenv("MS_CLIENT_ID")
