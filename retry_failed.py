@@ -132,6 +132,18 @@ def bump_name(name, count):
     return f"{base}__try{count + 1}{ext}"
 
 
+# Marker that permanently retires an item from the retry sweep. Without this, an
+# item that hit the retry cap stayed in the failed folder and was re-detected and
+# re-reported on every 6-hourly sweep — an endless stream of identical alert
+# emails. A "__dead" item is skipped on future sweeps and reported exactly once.
+DEAD_MARKER = "__dead"
+
+
+def mark_dead(name):
+    base, ext = os.path.splitext(name)
+    return f"{base}{DEAD_MARKER}{ext}"
+
+
 # =========================
 # Main
 # =========================
@@ -156,7 +168,7 @@ def main():
         failed_children = get_children(token, failed_folder["id"])
 
         requeued = 0
-        given_up = []
+        newly_dead = []
         # Failed items live under failed/posts and failed/stories; both go back to
         # the single "posts" queue, where aspect-ratio routing re-sorts them.
         for sub_name in (ONEDRIVE_POSTS_FOLDER_NAME, ONEDRIVE_STORIES_FOLDER_NAME):
@@ -169,11 +181,22 @@ def main():
                 name = item.get("name", "")
                 if not is_supported_media_file(name):
                     continue
+                # Already retired — skip so it is neither retried nor re-reported.
+                if DEAD_MARKER in name:
+                    continue
 
                 count = retry_count(name)
                 if count >= MAX_RETRIES:
-                    given_up.append(name)
-                    print(f"GIVE UP (failed {count}x): failed/{sub_name}/{name}")
+                    # Retire it: rename with the dead marker (staying in place) so
+                    # future sweeps ignore it. This is what stops the repeating
+                    # "still failing after retries" emails.
+                    dead_name = mark_dead(name)
+                    try:
+                        move_item(token, item["id"], sub["id"], dead_name)
+                        newly_dead.append(name)
+                        print(f"RETIRED (failed {count}x): failed/{sub_name}/{name} -> {dead_name}")
+                    except Exception as e:
+                        print(f"WARNING: could not retire {name}: {e}")
                     continue
 
                 new_name = bump_name(name, count)
@@ -184,19 +207,23 @@ def main():
                 except Exception as e:
                     print(f"WARNING: could not requeue {name}: {e}")
 
-        print(f"\nRetry sweep complete. Requeued {requeued}; gave up on {len(given_up)}.")
+        print(f"\nRetry sweep complete. Requeued {requeued}; retired {len(newly_dead)}.")
 
-        if given_up:
+        # Report only items retired THIS sweep — each broken item is announced
+        # exactly once, then never again.
+        if newly_dead:
             send_alert_safely(
-                "Reborn Auto Publisher: items still failing after retries",
+                "Reborn Auto Publisher: items retired after repeated failures",
                 "\n".join([
-                    f"{len(given_up)} item(s) failed to publish {MAX_RETRIES} times and were left in "
-                    f"'{ONEDRIVE_FAILED_FOLDER_NAME}' for you to check:",
+                    f"{len(newly_dead)} item(s) failed to publish {MAX_RETRIES} times and have been "
+                    f"retired (renamed with '{DEAD_MARKER}') in '{ONEDRIVE_FAILED_FOLDER_NAME}'. "
+                    "They will no longer be retried or reported:",
                     "",
-                    *[f"  - {n}" for n in given_up],
+                    *[f"  - {n}" for n in newly_dead],
                     "",
-                    "These usually mean the media itself has a problem, or a setting needs attention.",
-                    "Check the GitHub Actions logs for the exact Instagram/Facebook error.",
+                    "These usually mean the media itself has a problem (format/length/aspect).",
+                    "Delete them, or fix and re-upload. Check the GitHub Actions logs for the exact "
+                    "Instagram/Facebook error.",
                 ]),
             )
 
