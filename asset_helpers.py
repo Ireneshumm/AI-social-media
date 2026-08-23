@@ -138,6 +138,49 @@ def filename_to_brief(filename):
     return brief
 
 
+# Tokens that appear in filenames but are not part of the treatment name:
+# generator prefixes/modes/layouts and file/technical markers.
+_CAPTION_STOPWORDS = {
+    "ai", "try", "repost", "ig", "ios", "mp4", "mov", "jpg", "jpeg", "png", "webp",
+    "person", "device", "campaign", "hero", "feed", "story", "draft", "final", "copy",
+}
+# Preserve the correct casing of common device/treatment acronyms.
+_CAPTION_ACRONYMS = {"hifu": "HIFU", "ipl": "IPL", "led": "LED", "rf": "RF"}
+
+
+def _treatment_from_brief(brief_text):
+    """Best-effort treatment phrase from a filename brief: split into words, drop
+    generator/technical tokens and anything containing a digit, keep the rest."""
+    words = []
+    for raw in re.split(r"[^A-Za-z0-9]+", brief_text or ""):
+        if not raw or any(ch.isdigit() for ch in raw):
+            continue
+        if raw.lower() in _CAPTION_STOPWORDS:
+            continue
+        words.append(_CAPTION_ACRONYMS.get(raw.lower(), raw.capitalize()))
+    return " ".join(words).strip()
+
+
+def brand_fallback_caption(brief_text, short=False):
+    """A safe, on-brand caption for when AI caption generation is unavailable
+    (e.g. the OpenAI account is out of credit). Lets publishing continue with a
+    plain template instead of failing the whole post. Falls back to a generic
+    brand line when no usable treatment name remains."""
+    treatment = _treatment_from_brief(brief_text)
+
+    if short:
+        return f"{treatment} at Reborn Aesthetics" if len(treatment) >= 3 else "Reborn Aesthetics — Brisbane"
+    if len(treatment) >= 3:
+        return (
+            f"Experience {treatment} at Reborn Aesthetics — premium medical aesthetics "
+            "in Brisbane. Book your complimentary consultation today."
+        )
+    return (
+        "Premium medical aesthetics in Brisbane, tailored to you. "
+        "Book your complimentary consultation at Reborn Aesthetics today."
+    )
+
+
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         print('Usage: python asset_helpers.py "signature-facial.jpg"')
