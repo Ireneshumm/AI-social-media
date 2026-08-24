@@ -18,6 +18,7 @@ from asset_helpers import (
     is_story_media,
     recent_content_groups,
     pick_with_variety,
+    brand_fallback_caption,
 )
 from wordpress_media import upload_media
 from alert_email import send_alert_safely
@@ -460,7 +461,10 @@ Requirements:
                 print(f"Retrying in {delay} second(s)...")
                 time.sleep(delay)
 
-    raise last_error
+    # OpenAI is unavailable (e.g. out of credit). Degrade gracefully with a short
+    # on-brand template caption so the story still publishes instead of failing.
+    print(f"WARNING: caption generation unavailable ({last_error}); using brand template caption.")
+    return scrub_caption(brand_fallback_caption(brief_text, short=True))
 
 
 # =========================
