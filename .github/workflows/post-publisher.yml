@@ -231,13 +231,14 @@ jobs:
           elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "15 */6 * * *" ]; then
             PUBLISHER_TYPE="retry_failed"
           elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "30 22 * * *" ]; then
-            # Daily autonomous feed posts: generate 3 ads straight into the publish
-            # queue so the 3 daily post crons have fresh content to post.
+            # Daily autonomous feed images. Video is the primary feed content
+            # (with previously-posted videos recycled), and the grid is only ~1/3
+            # photos, so we generate just a couple of fresh images a day.
             PUBLISHER_TYPE="generate"
             export AD_FORMAT="feed"
             export AD_TARGET_FOLDER="${ONEDRIVE_POSTS_FOLDER_NAME:-posts}"
             export AD_LAYOUT="random"
-            export AD_COUNT="5"
+            export AD_COUNT="2"
           elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 21 * * *" ]; then
             # Daily autonomous stories: generate vertical 9:16 stories into the
             # single drop folder ("posts"); aspect-ratio routing sends them to the
