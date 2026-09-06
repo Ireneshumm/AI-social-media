@@ -765,6 +765,29 @@ def order_publish_candidates(matched, first, rng):
     return [first] + videos + images
 
 
+def recyclable_videos(posted_children):
+    """Previously-posted videos from the archive, offered for RE-POSTING when the
+    live queue has no fresh video. Lets the video-heavy grid keep going by cycling
+    the back-catalogue instead of needing new uploads every day. Marked
+    recycled=True so a successful repost is not re-archived."""
+    out = []
+    for it in posted_children or []:
+        if "folder" in it:
+            continue
+        name = it.get("name", "")
+        if get_media_kind(name) != "video":
+            continue
+        if not is_supported_media_file(name) or filename_is_noncompliant(name):
+            continue
+        out.append({
+            "base_name": os.path.splitext(name)[0],
+            "media": it,
+            "kind": "video",
+            "recycled": True,
+        })
+    return out
+
+
 def attempt_publish(token, selected_post):
     """Run the full download -> caption -> publish -> archive-success flow for a
     single asset. Returns the Instagram publish result on success. Raises on any
@@ -869,12 +892,17 @@ def attempt_publish(token, selected_post):
                 ]),
             )
 
-    print("Step 9: Archiving success item to posted/posts...")
-    archive_result = archive_post_assets(token, selected_post, success=True)
-    print("Archive completed.")
-    print(f"Moved to: {archive_result['target_folder']}")
-    print(f"Media: {archive_result['media_name']}")
-    print()
+    if selected_post.get("recycled"):
+        # A repost of an already-archived video — leave the original in place so
+        # it stays in the recycling rotation for next time.
+        print("Step 9: Recycled repost — left original in posted/posts (not re-archived).\n")
+    else:
+        print("Step 9: Archiving success item to posted/posts...")
+        archive_result = archive_post_assets(token, selected_post, success=True)
+        print("Archive completed.")
+        print(f"Moved to: {archive_result['target_folder']}")
+        print(f"Media: {archive_result['media_name']}")
+        print()
 
     return publish_result
 
@@ -906,6 +934,7 @@ def main():
         # video/photo layout pattern.
         recent_groups = set()
         posted_count = 0
+        posted_children = []
         try:
             posted_sub = get_subfolder_by_path(token, ONEDRIVE_POSTED_FOLDER_NAME, ONEDRIVE_POSTS_FOLDER_NAME)
             posted_children = get_folder_children(token, posted_sub["id"])
@@ -932,23 +961,33 @@ def main():
                 f"({posted_count} post(s) already published)."
             )
 
+        # Previously-posted videos available for re-posting. Video is the primary
+        # content and new videos are scarce, so when a video slot has no fresh
+        # video in the queue we recycle the back-catalogue instead of falling back
+        # to a photo — keeping the grid video-heavy.
+        recycle = recyclable_videos(posted_children)
+
         pool = matched
         if want_kind:
             same_kind = [m for m in matched if m["kind"] == want_kind]
             if same_kind:
                 pool = same_kind
+            elif want_kind == "video" and recycle:
+                pool = recycle
+                print(f"No fresh video in queue; recycling from {len(recycle)} previously-posted video(s).")
             else:
-                print(f"No {want_kind} asset available in the queue; falling back to any kind.")
+                print(f"No {want_kind} asset available (queue or archive); falling back to any kind.")
 
         first = pick_with_variety(pool, recent_groups, random)
+        tag = " (recycled repost)" if first.get("recycled") else ""
         print(
-            f"{len(matched)} feed asset(s) available ({len(pool)} matching '{want_kind or 'any'}'); "
-            f"avoided recent {sorted(recent_groups) or 'none'}; selected {first['media']['name']}."
+            f"{len(matched)} queued + {len(recycle)} recyclable video(s); "
+            f"avoided recent {sorted(recent_groups) or 'none'}; selected {first['media']['name']}{tag}."
         )
 
-        # Try the variety pick, then fall back to other assets (videos first) so a
-        # single bad asset never leaves the run with nothing published.
-        candidates = order_publish_candidates(matched, first, random)[:MAX_PUBLISH_ATTEMPTS]
+        # Try the variety pick, then fall back to other assets — including recycled
+        # videos (videos first) — so a slot is never left empty.
+        candidates = order_publish_candidates(matched + recycle, first, random)[:MAX_PUBLISH_ATTEMPTS]
 
         failures = []
         for idx, selected_post in enumerate(candidates):
@@ -964,6 +1003,11 @@ def main():
             except Exception as attempt_error:
                 print("\nERROR:", str(attempt_error))
                 failed_name = selected_post["media"]["name"]
+                if selected_post.get("recycled"):
+                    # An archive item — leave it in place (do not move to failed).
+                    print("Recycled video failed to publish; leaving it in the archive.")
+                    failures.append(f"{failed_name} (recycled): {attempt_error}")
+                    continue
                 try:
                     print("Archiving failed item to failed/posts...")
                     archive_result = archive_post_assets(token, selected_post, success=False)
