@@ -71,7 +71,8 @@ on:
     - cron: "0 11 * * *"    # 21:00 Brisbane (night scroll)
     - cron: "0 3 * * 1"
     - cron: "30 15 * * 0"
-    - cron: "30 22 * * *"
+    # (feed image auto-generation disabled — feed images are hand-made in ChatGPT
+    #  and uploaded; feed videos are recycled from the archive.)
     - cron: "0 21 * * *"
     - cron: "0 23 * * 1"
     - cron: "15 */6 * * *"
@@ -230,15 +231,6 @@ jobs:
             PUBLISHER_TYPE="insights_report"
           elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "15 */6 * * *" ]; then
             PUBLISHER_TYPE="retry_failed"
-          elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "30 22 * * *" ]; then
-            # Daily autonomous feed images. Video is the primary feed content
-            # (with previously-posted videos recycled), and the grid is only ~1/3
-            # photos, so we generate just a couple of fresh images a day.
-            PUBLISHER_TYPE="generate"
-            export AD_FORMAT="feed"
-            export AD_TARGET_FOLDER="${ONEDRIVE_POSTS_FOLDER_NAME:-posts}"
-            export AD_LAYOUT="random"
-            export AD_COUNT="2"
           elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 21 * * *" ]; then
             # Daily autonomous stories: generate vertical 9:16 stories into the
             # single drop folder ("posts"); aspect-ratio routing sends them to the
