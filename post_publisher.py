@@ -431,7 +431,7 @@ def parse_post_text(text_content):
 # (no CTA, contact, or hashtags of its own) so this block is always consistent.
 CAPTION_FOOTER = (
     "All bookings are made online at https://www.rebornaesthetics.com.au/ — just click "
-    "“Book Now”. If you’re unsure which treatment suits you, book a "
+    "“Book Now”. If you’re unsure which treatment suits you, book a complimentary "
     "consultation for a personalised plan.\n\n"
     "📞 0410 415 415\n"
     "📧 info@rebornaesthetics.com.au\n"
