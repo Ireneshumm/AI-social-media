@@ -73,7 +73,8 @@ on:
     - cron: "30 15 * * 0"
     # (feed image auto-generation disabled — feed images are hand-made in ChatGPT
     #  and uploaded; feed videos are recycled from the archive.)
-    - cron: "0 21 * * *"
+    # (daily story auto-generation disabled — story images are hand-made in
+    # ChatGPT and uploaded to the drop folder.)
     - cron: "0 23 * * 1"
     - cron: "15 */6 * * *"
 
@@ -231,16 +232,6 @@ jobs:
             PUBLISHER_TYPE="insights_report"
           elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "15 */6 * * *" ]; then
             PUBLISHER_TYPE="retry_failed"
-          elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 21 * * *" ]; then
-            # Daily autonomous stories: generate vertical 9:16 stories into the
-            # single drop folder ("posts"); aspect-ratio routing sends them to the
-            # hourly story publisher.
-            PUBLISHER_TYPE="generate"
-            export AD_FORMAT="story"
-            export AD_TARGET_FOLDER="${ONEDRIVE_POSTS_FOLDER_NAME:-posts}"
-            # Publisher now posts ~2 stories per run, so generate more to keep the
-            # queue supplied and comfortably clear the weekly Story targets.
-            export AD_COUNT="16"
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             PUBLISHER_TYPE="${{ inputs.publisher_type }}"
           else
