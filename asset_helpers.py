@@ -173,11 +173,11 @@ def brand_fallback_caption(brief_text, short=False):
     if len(treatment) >= 3:
         return (
             f"Experience {treatment} at Reborn Aesthetics — premium medical aesthetics "
-            "in Brisbane. Book your complimentary consultation today."
+            "in Brisbane. Book a consultation today."
         )
     return (
         "Premium medical aesthetics in Brisbane, tailored to you. "
-        "Book your complimentary consultation at Reborn Aesthetics today."
+        "Book a consultation at Reborn Aesthetics today."
     )
 
 
