@@ -167,25 +167,25 @@ def _treatment_from_brief(brief_text):
 # same caption (stable across retries) while different assets vary.
 _FALLBACK_WITH_TREATMENT = (
     "Experience {t} at Reborn Aesthetics — premium medical aesthetics in Brisbane. "
-    "Book a consultation today.",
-    "{t} at Reborn Aesthetics, Brisbane. Every treatment plan starts with a consultation "
+    "Book a complimentary consultation today.",
+    "{t} at Reborn Aesthetics, Brisbane. Every treatment plan starts with a complimentary consultation "
     "so it is matched to your skin.",
     "Considering {t}? Our Brisbane team will talk through suitability, what to expect and "
     "aftercare before anything begins.",
-    "{t} at our Annerley and Fortitude Valley clinics. Book a consultation to discuss "
+    "{t} at our Annerley and Fortitude Valley clinics. Book a complimentary consultation to discuss "
     "whether it suits you.",
-    "Thinking about {t}? Book a consultation in Brisbane and we will assess your skin and "
+    "Thinking about {t}? Book a complimentary consultation in Brisbane and we will assess your skin and "
     "goals first.",
 )
 
 _FALLBACK_GENERIC = (
-    "Premium medical aesthetics in Brisbane, tailored to you. Book a consultation at "
+    "Premium medical aesthetics in Brisbane, tailored to you. Book a complimentary consultation at "
     "Reborn Aesthetics today.",
     "Skin and cosmetic treatments in Annerley and Fortitude Valley, planned around your "
     "skin rather than a fixed menu.",
-    "Consultation-led treatment plans across two Brisbane clinics. Book a consultation at "
+    "Consultation-led treatment plans across two Brisbane clinics. Book a complimentary consultation at "
     "Reborn Aesthetics.",
-    "Your skin assessed properly before anything starts. Book a consultation at Reborn "
+    "Your skin assessed properly before anything starts. Book a complimentary consultation at Reborn "
     "Aesthetics in Brisbane.",
     "Reborn Aesthetics — medical aesthetics in Annerley and Fortitude Valley. Book a "
     "consultation to find what suits you.",
