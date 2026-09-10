@@ -19,6 +19,15 @@ on:
           - insights_check
           - insights_report
           - retry_failed
+          - tiktok_auth_url
+          - tiktok_auth
+          - tiktok_test
+          - tiktok_status
+      tiktok_redirect_url:
+        description: "tiktok_auth only: paste the whole address TikTok sent you to after approving"
+        required: false
+        default: ""
+        type: string
       ad_layout:
         description: "Ad layout (generate only)"
         required: false
@@ -223,6 +232,15 @@ jobs:
           AD_COUNT: ${{ inputs.ad_count || secrets.AD_COUNT }}
           AD_FORMAT: ${{ inputs.ad_format || secrets.AD_FORMAT }}
           AD_TARGET_FOLDER: ${{ inputs.ad_target || secrets.AD_TARGET_FOLDER }}
+          # TikTok drafts (optional). Client key / redirect URI / switches are
+          # repository VARIABLES (not secret, so links print unmasked); only the
+          # client secret is a SECRET. The pasted redirect address is read from
+          # the event file by tiktok_auth.py so it is never echoed into logs.
+          TIKTOK_PUBLISH_ENABLED: ${{ vars.TIKTOK_PUBLISH_ENABLED }}
+          TIKTOK_CLIENT_KEY: ${{ vars.TIKTOK_CLIENT_KEY }}
+          TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
+          TIKTOK_REDIRECT_URI: ${{ vars.TIKTOK_REDIRECT_URI }}
+          TIKTOK_MAX_PER_DAY: ${{ vars.TIKTOK_MAX_PER_DAY }}
         run: |
           if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 3 * * 1" ]; then
             PUBLISHER_TYPE="token_check"
@@ -241,7 +259,16 @@ jobs:
           echo "Selected publisher: ${PUBLISHER_TYPE}"
 
           if [ "${PUBLISHER_TYPE}" = "token_check" ]; then
+            python tiktok_auth.py keepalive || true
             python token_maintenance.py
+          elif [ "${PUBLISHER_TYPE}" = "tiktok_auth_url" ]; then
+            python tiktok_auth.py url
+          elif [ "${PUBLISHER_TYPE}" = "tiktok_auth" ]; then
+            python tiktok_auth.py exchange
+          elif [ "${PUBLISHER_TYPE}" = "tiktok_test" ]; then
+            python tiktok_auth.py test
+          elif [ "${PUBLISHER_TYPE}" = "tiktok_status" ]; then
+            python tiktok_auth.py status
           elif [ "${PUBLISHER_TYPE}" = "insights_check" ]; then
             python insights_check.py
           elif [ "${PUBLISHER_TYPE}" = "insights_report" ]; then
