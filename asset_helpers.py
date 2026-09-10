@@ -1,3 +1,4 @@
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -161,24 +162,59 @@ def _treatment_from_brief(brief_text):
     return " ".join(words).strip()
 
 
+# Several on-brand phrasings so consecutive fallback captions are not identical.
+# The line is chosen from a hash of the brief, so a given asset always gets the
+# same caption (stable across retries) while different assets vary.
+_FALLBACK_WITH_TREATMENT = (
+    "Experience {t} at Reborn Aesthetics — premium medical aesthetics in Brisbane. "
+    "Book a complimentary consultation today.",
+    "{t} at Reborn Aesthetics, Brisbane. Every treatment plan starts with a complimentary consultation "
+    "so it is matched to your skin.",
+    "Considering {t}? Our Brisbane team will talk through suitability, what to expect and "
+    "aftercare before anything begins.",
+    "{t} at our Annerley and Fortitude Valley clinics. Book a complimentary consultation to discuss "
+    "whether it suits you.",
+    "Thinking about {t}? Book a complimentary consultation in Brisbane and we will assess your skin and "
+    "goals first.",
+)
+
+_FALLBACK_GENERIC = (
+    "Premium medical aesthetics in Brisbane, tailored to you. Book a complimentary consultation at "
+    "Reborn Aesthetics today.",
+    "Skin and cosmetic treatments in Annerley and Fortitude Valley, planned around your "
+    "skin rather than a fixed menu.",
+    "Consultation-led treatment plans across two Brisbane clinics. Book a complimentary consultation at "
+    "Reborn Aesthetics.",
+    "Your skin assessed properly before anything starts. Book a complimentary consultation at Reborn "
+    "Aesthetics in Brisbane.",
+    "Reborn Aesthetics — medical aesthetics in Annerley and Fortitude Valley. Book a "
+    "consultation to find what suits you.",
+)
+
+
+def _fallback_index(brief_text, count):
+    """Stable per-asset choice so the same brief always picks the same line."""
+    digest = hashlib.sha1((brief_text or "").encode("utf-8")).hexdigest()
+    return int(digest[:8], 16) % count
+
+
 def brand_fallback_caption(brief_text, short=False):
     """A safe, on-brand caption for when AI caption generation is unavailable
     (e.g. the OpenAI account is out of credit). Lets publishing continue with a
     plain template instead of failing the whole post. Falls back to a generic
     brand line when no usable treatment name remains."""
     treatment = _treatment_from_brief(brief_text)
+    has_treatment = len(treatment) >= 3
 
     if short:
-        return f"{treatment} at Reborn Aesthetics" if len(treatment) >= 3 else "Reborn Aesthetics — Brisbane"
-    if len(treatment) >= 3:
-        return (
-            f"Experience {treatment} at Reborn Aesthetics — premium medical aesthetics "
-            "in Brisbane. Book your complimentary consultation today."
-        )
-    return (
-        "Premium medical aesthetics in Brisbane, tailored to you. "
-        "Book your complimentary consultation at Reborn Aesthetics today."
-    )
+        return f"{treatment} at Reborn Aesthetics" if has_treatment else "Reborn Aesthetics — Brisbane"
+
+    if has_treatment:
+        i = _fallback_index(brief_text, len(_FALLBACK_WITH_TREATMENT))
+        return _FALLBACK_WITH_TREATMENT[i].format(t=treatment)
+
+    i = _fallback_index(brief_text, len(_FALLBACK_GENERIC))
+    return _FALLBACK_GENERIC[i]
 
 
 if __name__ == "__main__":
