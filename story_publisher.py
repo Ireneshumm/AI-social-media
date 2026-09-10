@@ -18,6 +18,7 @@ from asset_helpers import (
     is_story_media,
     recent_content_groups,
     pick_with_variety,
+    content_group,
     brand_fallback_caption,
 )
 from wordpress_media import upload_media
@@ -364,6 +365,39 @@ def match_story_assets(items):
 
     matched.sort(key=lambda x: x["base_name"])
     return matched
+
+
+def recyclable_stories(posted_children):
+    """Previously-posted STORY assets from the archive, offered for re-posting when
+    the live queue has no fresh story. Returned OLDEST-POSTED FIRST so the caller
+    can round-robin — every story in the library airs once before any repeats.
+    Marked recycled=True so a successful repost is not re-archived."""
+    out = []
+    for it in posted_children or []:
+        if "folder" in it:
+            continue
+        name = it.get("name", "")
+        if not is_supported_media_file(name) or not is_story_media(it):
+            continue
+        if filename_is_noncompliant(name):
+            continue
+        out.append({
+            "base_name": os.path.splitext(name)[0],
+            "media": it,
+            "kind": get_media_kind(name),
+            "recycled": True,
+            "_posted_at": it.get("lastModifiedDateTime") or "",
+        })
+    out.sort(key=lambda m: m["_posted_at"])  # least recently shown first
+    return out
+
+
+def touch_item(token, item_id):
+    """Bump an archived item's modified time to now so a recycled repost moves to
+    the back of the round-robin (won't repeat until the rest cycle)."""
+    now = datetime.now().astimezone().isoformat()
+    url = f"https://graph.microsoft.com/v1.0/users/{ONEDRIVE_USER_EMAIL}/drive/items/{item_id}"
+    graph_patch(url, token, {"fileSystemInfo": {"lastModifiedDateTime": now}})
 
 
 # =========================
@@ -855,12 +889,21 @@ def publish_one_story(token, selected_story):
                 ]),
             )
 
-    print("Step 9: Archiving success item to posted/stories...")
-    archive_result = archive_story_assets(token, selected_story, success=True)
-    print("Archive completed.")
-    print(f"Moved to: {archive_result['target_folder']}")
-    print(f"Media: {archive_result['media_name']}")
-    print()
+    if selected_story.get("recycled"):
+        # A repost of an already-archived story — leave it in place, bump its
+        # timestamp so it goes to the back of the rotation.
+        print("Step 9: Recycled repost — left original in posted/stories; moved to back of rotation.\n")
+        try:
+            touch_item(token, selected_story["media"]["id"])
+        except Exception as e:  # noqa: BLE001
+            print(f"WARNING: could not update recycle timestamp ({e}); rotation may repeat sooner.")
+    else:
+        print("Step 9: Archiving success item to posted/stories...")
+        archive_result = archive_story_assets(token, selected_story, success=True)
+        print("Archive completed.")
+        print(f"Moved to: {archive_result['target_folder']}")
+        print(f"Media: {archive_result['media_name']}")
+        print()
 
     return publish_result
 
@@ -883,18 +926,21 @@ def main():
         print("Step 3: Finding vertical (9:16) story assets...")
         matched = match_story_assets(items)
 
-        if not matched:
-            print("No valid vertical story assets found. Exit gracefully.")
-            sys.exit(0)
-
-        # Steer away from the kinds of content most recently posted, for day-to-day
-        # variety.
+        # Steer away from the kinds of content most recently posted, and build the
+        # recycle pool from the posted-stories archive (oldest-posted first).
         recent_groups = set()
+        recycle = []
         try:
             posted_sub = get_subfolder_by_path(token, ONEDRIVE_POSTED_FOLDER_NAME, ONEDRIVE_STORIES_FOLDER_NAME)
-            recent_groups = recent_content_groups(get_folder_children(token, posted_sub["id"]), n=2)
+            posted_children = get_folder_children(token, posted_sub["id"])
+            recent_groups = recent_content_groups(posted_children, n=2)
+            recycle = recyclable_stories(posted_children)
         except Exception as e:
-            print(f"Variety history unavailable ({e}); selecting at random.")
+            print(f"Variety/recycle history unavailable ({e}); selecting at random.")
+
+        if not matched and not recycle:
+            print("No story assets available (queue or archive). Exit gracefully.")
+            sys.exit(0)
 
         # Publish several stories per run. GitHub only fires the hourly schedule
         # ~10-12 times a day, so posting more than one story per run is how we
@@ -902,19 +948,30 @@ def main():
         # distinct asset and is published independently — one failing never stops
         # the others.
         target = max(1, STORIES_PER_RUN)
-        print(f"{len(matched)} story asset(s) available; aiming to publish up to {target} this run.\n")
+        print(
+            f"{len(matched)} fresh + {len(recycle)} recyclable story asset(s); "
+            f"aiming to publish up to {target} this run.\n"
+        )
 
         published = 0
         failures = []
         used_ids = set()
         for slot in range(target):
-            remaining = [m for m in matched if m["media"]["id"] not in used_ids]
-            if not remaining:
-                print(f"No more distinct story assets available; stopping at {published}.")
-                break
-            selected_story = pick_with_variety(remaining, recent_groups, random)
+            # Prefer a fresh queue story; when none are left, recycle the story that
+            # has gone longest without airing (round-robin through the library).
+            remaining_fresh = [m for m in matched if m["media"]["id"] not in used_ids]
+            if remaining_fresh:
+                selected_story = pick_with_variety(remaining_fresh, recent_groups, random)
+            else:
+                remaining_recycle = [m for m in recycle if m["media"]["id"] not in used_ids]
+                if not remaining_recycle:
+                    print(f"No more distinct story assets available; stopping at {published}.")
+                    break
+                eligible = [m for m in remaining_recycle if content_group(m["media"]["name"]) not in recent_groups]
+                selected_story = (eligible or remaining_recycle)[0]
             used_ids.add(selected_story["media"]["id"])
-            print(f"===== Story {slot + 1}/{target}: {selected_story['media']['name']} =====")
+            tag = " (recycled repost)" if selected_story.get("recycled") else ""
+            print(f"===== Story {slot + 1}/{target}: {selected_story['media']['name']}{tag} =====")
             try:
                 publish_one_story(token, selected_story)
                 published += 1
@@ -923,6 +980,9 @@ def main():
             except Exception as story_error:
                 print("\nERROR:", str(story_error))
                 failures.append(f"{selected_story['media']['name']}: {story_error}")
+                if selected_story.get("recycled"):
+                    print("Recycled story failed to publish; leaving it in the archive.")
+                    continue
                 try:
                     print("Archiving failed item to failed/stories...")
                     archive_result = archive_story_assets(token, selected_story, success=False)
