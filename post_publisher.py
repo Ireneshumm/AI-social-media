@@ -16,6 +16,7 @@ from asset_helpers import (
     is_story_media,
     recent_content_groups,
     pick_with_variety,
+    content_group,
     brand_fallback_caption,
 )
 from wordpress_media import upload_media
@@ -767,8 +768,9 @@ def order_publish_candidates(matched, first, rng):
 
 def recyclable_videos(posted_children):
     """Previously-posted videos from the archive, offered for RE-POSTING when the
-    live queue has no fresh video. Lets the video-heavy grid keep going by cycling
-    the back-catalogue instead of needing new uploads every day. Marked
+    live queue has no fresh video. Returned OLDEST-POSTED FIRST so the caller can
+    round-robin: always repost the video that hasn't been shown for the longest,
+    so every video in the library is cycled through before any repeats. Marked
     recycled=True so a successful repost is not re-archived."""
     out = []
     for it in posted_children or []:
@@ -784,8 +786,19 @@ def recyclable_videos(posted_children):
             "media": it,
             "kind": "video",
             "recycled": True,
+            "_posted_at": it.get("lastModifiedDateTime") or "",
         })
+    # Oldest last-posted first = least recently shown.
+    out.sort(key=lambda m: m["_posted_at"])
     return out
+
+
+def touch_item(token, item_id):
+    """Bump an archived item's modified time to now, so a recycled repost moves to
+    the BACK of the round-robin and won't be picked again until the rest cycle."""
+    now = datetime.now().astimezone().isoformat()
+    url = f"https://graph.microsoft.com/v1.0/users/{ONEDRIVE_USER_EMAIL}/drive/items/{item_id}"
+    graph_patch(url, token, {"fileSystemInfo": {"lastModifiedDateTime": now}})
 
 
 def attempt_publish(token, selected_post):
@@ -893,9 +906,14 @@ def attempt_publish(token, selected_post):
             )
 
     if selected_post.get("recycled"):
-        # A repost of an already-archived video — leave the original in place so
-        # it stays in the recycling rotation for next time.
-        print("Step 9: Recycled repost — left original in posted/posts (not re-archived).\n")
+        # A repost of an already-archived video — leave the file in place, but bump
+        # its timestamp so it goes to the back of the rotation (won't repeat until
+        # every other video has been shown).
+        print("Step 9: Recycled repost — left original in posted/posts; moving it to the back of the rotation.\n")
+        try:
+            touch_item(token, selected_post["media"]["id"])
+        except Exception as e:  # noqa: BLE001
+            print(f"WARNING: could not update recycle timestamp ({e}); rotation may repeat sooner.")
     else:
         print("Step 9: Archiving success item to posted/posts...")
         archive_result = archive_post_assets(token, selected_post, success=True)
@@ -965,20 +983,29 @@ def main():
         # content and new videos are scarce, so when a video slot has no fresh
         # video in the queue we recycle the back-catalogue instead of falling back
         # to a photo — keeping the grid video-heavy.
-        recycle = recyclable_videos(posted_children)
+        recycle = recyclable_videos(posted_children)  # oldest-posted first
 
         pool = matched
+        recycling = False
         if want_kind:
             same_kind = [m for m in matched if m["kind"] == want_kind]
             if same_kind:
                 pool = same_kind
             elif want_kind == "video" and recycle:
                 pool = recycle
+                recycling = True
                 print(f"No fresh video in queue; recycling from {len(recycle)} previously-posted video(s).")
             else:
                 print(f"No {want_kind} asset available (queue or archive); falling back to any kind.")
 
-        first = pick_with_variety(pool, recent_groups, random)
+        if recycling:
+            # Round-robin: repost the video that has gone longest without airing
+            # (skip the last couple of topics for variety), so the whole library
+            # cycles through before any video repeats.
+            eligible = [m for m in pool if content_group(m["media"]["name"]) not in recent_groups]
+            first = (eligible or pool)[0]
+        else:
+            first = pick_with_variety(pool, recent_groups, random)
         tag = " (recycled repost)" if first.get("recycled") else ""
         print(
             f"{len(matched)} queued + {len(recycle)} recyclable video(s); "
