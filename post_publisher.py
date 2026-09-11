@@ -27,6 +27,14 @@ from media_analysis import get_caption_image_uris
 from compliance import COMPLIANCE_RULES, scrub_caption, filename_is_noncompliant
 from image_hosting import upload_to_imgbb
 
+# TikTok drafts are optional: a problem in that module must never stop
+# Instagram/Facebook publishing, so even the import is guarded.
+try:
+    from tiktok_publish import maybe_share_to_tiktok
+except Exception as _tiktok_import_error:  # noqa: BLE001
+    maybe_share_to_tiktok = None
+    print(f"WARNING: TikTok module unavailable ({_tiktok_import_error}); TikTok step disabled.")
+
 load_dotenv()
 
 # =========================
@@ -904,6 +912,14 @@ def attempt_publish(token, selected_post):
                     "Please check GitHub Actions logs. The Instagram post was published normally.",
                 ]),
             )
+
+    if maybe_share_to_tiktok is not None:
+        # Step 8c: send Reborn's own videos to TikTok drafts (optional, never
+        # affects the Instagram/Facebook result). TikTok gets the caption body
+        # only; its own short footer is added there.
+        print("Step 8c: TikTok draft (if enabled and eligible)...")
+        maybe_share_to_tiktok(token, selected_post, media_path, caption.split(CAPTION_FOOTER)[0].strip())
+        print()
 
     if selected_post.get("recycled"):
         # A repost of an already-archived video — leave the file in place, but bump
