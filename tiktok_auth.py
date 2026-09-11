@@ -180,6 +180,14 @@ def cmd_status():
     print(f"Videos sent to TikTok drafts: {len(sent)} total, {sum(1 for v in sent.values() if v.get('date') == today)} today")
     for v in sorted(sent.values(), key=lambda v: v.get("at", ""), reverse=True)[:5]:
         print(f"  {v.get('at')}  {v.get('name')}  ({v.get('status')})")
+    try:
+        videos = _candidate_videos(graph)
+        waiting = [v for v in videos if v["id"] not in sent]
+        print(f"Reborn's own videos TikTok can use: {len(videos)} ({len(waiting)} not sent yet; repost_/ai_ excluded)")
+        for v in waiting[:10]:
+            print(f"  waiting: {v['name']}")
+    except Exception as e:  # noqa: BLE001
+        print(f"Could not list candidate videos: {e}")
 
 
 def cmd_keepalive():
