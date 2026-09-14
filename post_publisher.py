@@ -53,6 +53,21 @@ PAGE_ACCESS_TOKEN = (os.getenv("PAGE_ACCESS_TOKEN") or "").strip()
 GRAPH_VERSION = os.getenv("META_GRAPH_API_VERSION", "v23.0")
 DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
 
+# Geotag every post with a Facebook Place ID so it surfaces to locals browsing
+# that location on Instagram — the single strongest local-discovery signal.
+# Set IG_LOCATION_ID to the clinic's Facebook Place ID (find it by running the
+# publisher with publisher_type=find_location). When unset, posts publish with
+# no location, exactly as before.
+IG_LOCATION_ID = (os.getenv("IG_LOCATION_ID") or "").strip()
+
+
+def with_location(payload):
+    """Attach the configured Facebook Place ID to a media-container payload so
+    the published post carries a geotag. No-op when IG_LOCATION_ID is unset."""
+    if IG_LOCATION_ID:
+        payload["location_id"] = IG_LOCATION_ID
+    return payload
+
 # If the chosen asset fails to publish, fall back to other assets (videos first)
 # up to this many total attempts, so a run almost always publishes something.
 MAX_PUBLISH_ATTEMPTS = int(os.getenv("MAX_PUBLISH_ATTEMPTS", "4"))
@@ -640,23 +655,23 @@ def post_with_retry(url, payload, timeout=60, label="Instagram Graph request"):
 
 def create_media_container(image_url, caption):
     url = f"{GRAPH_BASE}/{IG_USER_ID}/media"
-    payload = {
+    payload = with_location({
         "image_url": image_url,
         "caption": caption,
         "access_token": PAGE_ACCESS_TOKEN,
-    }
+    })
     resp = post_with_retry(url, payload, timeout=60, label="create_media_container")
     return resp.json()
 
 
 def create_video_media_container(video_url, caption):
     url = f"{GRAPH_BASE}/{IG_USER_ID}/media"
-    payload = {
+    payload = with_location({
         "media_type": "REELS",
         "video_url": video_url,
         "caption": caption,
         "access_token": PAGE_ACCESS_TOKEN,
-    }
+    })
     resp = post_with_retry(url, payload, timeout=60, label="create_video_media_container")
     return resp.json()
 
@@ -729,12 +744,12 @@ def create_video_container_resumable(caption):
     # Ask Instagram for a resumable upload container so we can send the video
     # bytes directly (WordPress blocks Instagram's video fetcher).
     url = f"{GRAPH_BASE}/{IG_USER_ID}/media"
-    payload = {
+    payload = with_location({
         "media_type": "REELS",
         "upload_type": "resumable",
         "caption": caption,
         "access_token": PAGE_ACCESS_TOKEN,
-    }
+    })
     resp = post_with_retry(url, payload, timeout=60, label="create_video_container_resumable")
     return resp.json()
 
