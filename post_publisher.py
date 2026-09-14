@@ -427,25 +427,68 @@ def parse_post_text(text_content):
     return image_url, brief
 
 
-# Fixed footer appended to every post caption: booking CTA, contact details,
-# clinic locations and the standard hashtag set. The AI writes only the body
-# (no CTA, contact, or hashtags of its own) so this block is always consistent.
-CAPTION_FOOTER = (
+# Fixed contact/CTA block appended to every post caption (no hashtags — those
+# are built separately and rotated below for local reach). The AI writes only
+# the body, so this keeps CTA, contact and locations identical on every post.
+CONTACT_FOOTER = (
     "All bookings are made online at https://www.rebornaesthetics.com.au/ — just click "
     "“Book Now”. If you’re unsure which treatment suits you, book a complimentary "
     "consultation for a personalised plan.\n\n"
     "📞 0410 415 415\n"
     "📧 info@rebornaesthetics.com.au\n"
     "🌐 www.rebornaesthetics.com.au\n\n"
-    "📍 Annerley — 69 Juliette Street\n"
-    "📍 Fortitude Valley — 27 Brunswick Street\n\n"
-    "#brisbane #brisbanebusiness #brisbanemums #brisbanephotographer "
-    "#brisbanebeauty #brisbanesalon #brisbaneskin #brisbanebeautyclinic "
-    "#brisbanefacials #brisbanecosmeticclinic #brisbaneaesthetics "
-    "#picosurelaser #picowaylaser #skinneedlingbrisbane "
-    "#hifubrisbane #iplhairremovalbrisbane #acnescarsbrisbane "
-    "#brisbanebeautybloggers #brisbanemakeupartist #australianbeautyclinic"
+    "📍 Annerley — 69 Juliette Street (Brisbane Southside)\n"
+    "📍 Fortitude Valley — 27 Brunswick Street"
 )
+
+# --- Local-first hashtags ---------------------------------------------------
+# Goal: be discovered by real Brisbane locals who can actually walk in and book,
+# NOT by overseas device fans, other clinics, or follow-for-follow peers. So we
+# deliberately DROP: giant catch-all tags (#brisbane), peer/networker tags
+# (#brisbanemakeupartist, #brisbanebeautybloggers, #brisbanephotographer), and
+# global device tags (#picowaylaser). Suburb-level tags carry the strongest
+# local intent, backed by "service + Brisbane" tags people actually search when
+# looking for a clinic near them.
+
+# Always included: the two clinic suburbs, the region, and the strongest
+# local-intent service tags.
+LOCAL_CORE_TAGS = [
+    "#annerley", "#fortitudevalley", "#brisbanesouthside",
+    "#skinclinicbrisbane", "#brisbanecosmeticclinic", "#brisbaneaesthetics",
+]
+
+# Rotated per post (a different subset each time) so the block is not identical
+# on every post — a repeated wall of tags can suppress reach — while every
+# option stays local (a nearby suburb) or local-service intent.
+LOCAL_ROTATING_TAGS = [
+    # suburbs near Annerley (southside, 4103) and Fortitude Valley (inner city, 4006)
+    "#woolloongabba", "#westendbrisbane", "#southbrisbane", "#greenslopes",
+    "#coorparoo", "#tarragindi", "#moorooka", "#yeronga", "#kangaroopoint",
+    "#newfarmbrisbane", "#teneriffe", "#springhillbrisbane", "#brisbanenorthside",
+    # service + Brisbane search intent
+    "#brisbaneskinclinic", "#brisbaneskincare", "#brisbanefacials",
+    "#brisbanebeautyclinic", "#brisbanelaserclinic", "#skinneedlingbrisbane",
+    "#iplbrisbane", "#hifubrisbane", "#acnescarsbrisbane", "#brisbaneskin",
+    "#hydrafacialbrisbane",
+]
+
+
+def build_local_hashtags(seed_text, rotating_count=12):
+    """Return a local-first hashtag block. The core suburb/service tags are
+    always present; a rotating subset of nearby-suburb and service tags is drawn
+    from a stable per-asset seed, so the same asset stays consistent across
+    retries while different assets vary (keeps the block from being identical on
+    every post, which can hurt reach)."""
+    rng = random.Random(seed_text or "")
+    pool = list(LOCAL_ROTATING_TAGS)
+    rng.shuffle(pool)
+    tags = LOCAL_CORE_TAGS + pool[:rotating_count]
+    return " ".join(tags)
+
+
+def compose_caption(body, brief_text):
+    """Body + fixed contact/CTA block + a rotated local-first hashtag block."""
+    return f"{body}\n\n{CONTACT_FOOTER}\n\n{build_local_hashtags(brief_text)}"
 
 
 def generate_caption(brief_text, image_uris=None):
@@ -464,6 +507,7 @@ Requirements:
 - Length: short to medium
 - Make it suitable for an Instagram post
 - Write ONLY the caption body. Do NOT include hashtags, any call to action, booking instructions, links, phone numbers, email, or address (a fixed footer with all of that is added automatically after your text)
+- Speak to a LOCAL Brisbane audience so nearby residents feel this is their neighbourhood clinic: where it reads naturally, root it in the local area (Brisbane's southside, Annerley, Fortitude Valley, "local to you"). Do not stuff suburb names or sound like an ad.
 - No medical claims and no guaranteed results
 
 {COMPLIANCE_RULES}
@@ -484,6 +528,7 @@ Requirements:
 - Length: short to medium
 - Make it suitable for an Instagram post
 - Write ONLY the caption body. Do NOT include hashtags, any call to action, booking instructions, links, phone numbers, email, or address (a fixed footer with all of that is added automatically after your text)
+- Speak to a LOCAL Brisbane audience so nearby residents feel this is their neighbourhood clinic: where it reads naturally, root it in the local area (Brisbane's southside, Annerley, Fortitude Valley, "local to you"). Do not stuff suburb names or sound like an ad.
 - No medical claims and no guaranteed results
 
 {COMPLIANCE_RULES}
@@ -500,7 +545,7 @@ Requirements:
                 input=model_input
             )
             body = scrub_caption(response.output_text.strip())
-            return f"{body}\n\n{CAPTION_FOOTER}"
+            return compose_caption(body, brief_text)
         except Exception as e:
             last_error = e
 
@@ -516,7 +561,7 @@ Requirements:
     # on-brand template caption so the post still publishes instead of failing.
     print(f"WARNING: caption generation unavailable ({last_error}); using brand template caption.")
     body = scrub_caption(brand_fallback_caption(brief_text))
-    return f"{body}\n\n{CAPTION_FOOTER}"
+    return compose_caption(body, brief_text)
 
 
 # =========================

@@ -440,6 +440,7 @@ Requirements:
 - No hashtags
 - No medical claims
 - No overpromising results
+- Where natural, give it a local Brisbane feel (Annerley / Fortitude Valley / Brisbane's southside) so nearby locals recognise it as their neighbourhood clinic
 - Use a soft call to action only if it feels natural
 - Return only the caption text
 
@@ -463,6 +464,7 @@ Requirements:
 - No hashtags
 - No medical claims
 - No overpromising results
+- Where natural, give it a local Brisbane feel (Annerley / Fortitude Valley / Brisbane's southside) so nearby locals recognise it as their neighbourhood clinic
 - Use a soft call to action only if it feels natural
 - Return only the caption text
 
