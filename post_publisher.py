@@ -68,6 +68,24 @@ def with_location(payload):
         payload["location_id"] = IG_LOCATION_ID
     return payload
 
+
+def create_container_safe(url, payload, label):
+    """Create a media container, retrying once WITHOUT the geotag if the request
+    fails while a location_id is attached. A location_id that Instagram will not
+    accept (e.g. a Page with no address, so it is not a taggable place) must
+    never block publishing — worst case the post simply goes out ungeotagged."""
+    try:
+        return post_with_retry(url, payload, timeout=60, label=label)
+    except Exception as e:
+        if payload.get("location_id"):
+            print(
+                f"WARNING: {label} failed with a geotag ({e}); "
+                "retrying without location_id so the post still publishes."
+            )
+            payload.pop("location_id", None)
+            return post_with_retry(url, payload, timeout=60, label=f"{label} (no geotag)")
+        raise
+
 # If the chosen asset fails to publish, fall back to other assets (videos first)
 # up to this many total attempts, so a run almost always publishes something.
 MAX_PUBLISH_ATTEMPTS = int(os.getenv("MAX_PUBLISH_ATTEMPTS", "4"))
@@ -660,7 +678,7 @@ def create_media_container(image_url, caption):
         "caption": caption,
         "access_token": PAGE_ACCESS_TOKEN,
     })
-    resp = post_with_retry(url, payload, timeout=60, label="create_media_container")
+    resp = create_container_safe(url, payload, label="create_media_container")
     return resp.json()
 
 
@@ -672,7 +690,7 @@ def create_video_media_container(video_url, caption):
         "caption": caption,
         "access_token": PAGE_ACCESS_TOKEN,
     })
-    resp = post_with_retry(url, payload, timeout=60, label="create_video_media_container")
+    resp = create_container_safe(url, payload, label="create_video_media_container")
     return resp.json()
 
 
@@ -750,7 +768,7 @@ def create_video_container_resumable(caption):
         "caption": caption,
         "access_token": PAGE_ACCESS_TOKEN,
     })
-    resp = post_with_retry(url, payload, timeout=60, label="create_video_container_resumable")
+    resp = create_container_safe(url, payload, label="create_video_container_resumable")
     return resp.json()
 
 
