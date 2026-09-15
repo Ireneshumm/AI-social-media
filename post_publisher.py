@@ -66,6 +66,9 @@ def with_location(payload):
     the published post carries a geotag. No-op when IG_LOCATION_ID is unset."""
     if IG_LOCATION_ID:
         payload["location_id"] = IG_LOCATION_ID
+        print(f"Geotag: attaching location_id={IG_LOCATION_ID} to this post.")
+    else:
+        print("Geotag: IG_LOCATION_ID not set; publishing without a location.")
     return payload
 
 
