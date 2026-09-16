@@ -19,6 +19,12 @@ on:
           - insights_check
           - insights_report
           - retry_failed
+          - find_location
+      location_query:
+        description: "Place name to search (find_location only)"
+        required: false
+        default: "Reborn Aesthetics"
+        type: string
       ad_layout:
         description: "Ad layout (generate only)"
         required: false
@@ -129,6 +135,7 @@ jobs:
           ONEDRIVE_FAILED_FOLDER_NAME: ${{ secrets.ONEDRIVE_FAILED_FOLDER_NAME }}
           ONEDRIVE_USER_EMAIL: ${{ secrets.ONEDRIVE_USER_EMAIL }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_LOCATION_ID: ${{ secrets.IG_LOCATION_ID }}
           PAGE_ACCESS_TOKEN: ${{ secrets.PAGE_ACCESS_TOKEN }}
           META_GRAPH_API_VERSION: ${{ secrets.META_GRAPH_API_VERSION }}
           DRY_RUN: ${{ secrets.DRY_RUN }}
@@ -199,6 +206,7 @@ jobs:
           ONEDRIVE_FAILED_FOLDER_NAME: ${{ secrets.ONEDRIVE_FAILED_FOLDER_NAME }}
           ONEDRIVE_USER_EMAIL: ${{ secrets.ONEDRIVE_USER_EMAIL }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_LOCATION_ID: ${{ secrets.IG_LOCATION_ID }}
           PAGE_ACCESS_TOKEN: ${{ secrets.PAGE_ACCESS_TOKEN }}
           META_GRAPH_API_VERSION: ${{ secrets.META_GRAPH_API_VERSION }}
           DRY_RUN: ${{ secrets.DRY_RUN }}
@@ -223,6 +231,7 @@ jobs:
           AD_COUNT: ${{ inputs.ad_count || secrets.AD_COUNT }}
           AD_FORMAT: ${{ inputs.ad_format || secrets.AD_FORMAT }}
           AD_TARGET_FOLDER: ${{ inputs.ad_target || secrets.AD_TARGET_FOLDER }}
+          LOCATION_QUERY: ${{ inputs.location_query }}
         run: |
           if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 3 * * 1" ]; then
             PUBLISHER_TYPE="token_check"
@@ -240,7 +249,9 @@ jobs:
 
           echo "Selected publisher: ${PUBLISHER_TYPE}"
 
-          if [ "${PUBLISHER_TYPE}" = "token_check" ]; then
+          if [ "${PUBLISHER_TYPE}" = "find_location" ]; then
+            python find_ig_location.py
+          elif [ "${PUBLISHER_TYPE}" = "token_check" ]; then
             python token_maintenance.py
           elif [ "${PUBLISHER_TYPE}" = "insights_check" ]; then
             python insights_check.py

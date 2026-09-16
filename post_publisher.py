@@ -53,6 +53,42 @@ PAGE_ACCESS_TOKEN = (os.getenv("PAGE_ACCESS_TOKEN") or "").strip()
 GRAPH_VERSION = os.getenv("META_GRAPH_API_VERSION", "v23.0")
 DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
 
+# Geotag every post with a Facebook Place ID so it surfaces to locals browsing
+# that location on Instagram — the single strongest local-discovery signal.
+# Set IG_LOCATION_ID to the clinic's Facebook Place ID (find it by running the
+# publisher with publisher_type=find_location). When unset, posts publish with
+# no location, exactly as before.
+IG_LOCATION_ID = (os.getenv("IG_LOCATION_ID") or "").strip()
+
+
+def with_location(payload):
+    """Attach the configured Facebook Place ID to a media-container payload so
+    the published post carries a geotag. No-op when IG_LOCATION_ID is unset."""
+    if IG_LOCATION_ID:
+        payload["location_id"] = IG_LOCATION_ID
+        print(f"Geotag: attaching location_id={IG_LOCATION_ID} to this post.")
+    else:
+        print("Geotag: IG_LOCATION_ID not set; publishing without a location.")
+    return payload
+
+
+def create_container_safe(url, payload, label):
+    """Create a media container, retrying once WITHOUT the geotag if the request
+    fails while a location_id is attached. A location_id that Instagram will not
+    accept (e.g. a Page with no address, so it is not a taggable place) must
+    never block publishing — worst case the post simply goes out ungeotagged."""
+    try:
+        return post_with_retry(url, payload, timeout=60, label=label)
+    except Exception as e:
+        if payload.get("location_id"):
+            print(
+                f"WARNING: {label} failed with a geotag ({e}); "
+                "retrying without location_id so the post still publishes."
+            )
+            payload.pop("location_id", None)
+            return post_with_retry(url, payload, timeout=60, label=f"{label} (no geotag)")
+        raise
+
 # If the chosen asset fails to publish, fall back to other assets (videos first)
 # up to this many total attempts, so a run almost always publishes something.
 MAX_PUBLISH_ATTEMPTS = int(os.getenv("MAX_PUBLISH_ATTEMPTS", "4"))
@@ -427,25 +463,68 @@ def parse_post_text(text_content):
     return image_url, brief
 
 
-# Fixed footer appended to every post caption: booking CTA, contact details,
-# clinic locations and the standard hashtag set. The AI writes only the body
-# (no CTA, contact, or hashtags of its own) so this block is always consistent.
-CAPTION_FOOTER = (
+# Fixed contact/CTA block appended to every post caption (no hashtags — those
+# are built separately and rotated below for local reach). The AI writes only
+# the body, so this keeps CTA, contact and locations identical on every post.
+CONTACT_FOOTER = (
     "All bookings are made online at https://www.rebornaesthetics.com.au/ — just click "
     "“Book Now”. If you’re unsure which treatment suits you, book a complimentary "
     "consultation for a personalised plan.\n\n"
     "📞 0410 415 415\n"
     "📧 info@rebornaesthetics.com.au\n"
     "🌐 www.rebornaesthetics.com.au\n\n"
-    "📍 Annerley — 69 Juliette Street\n"
-    "📍 Fortitude Valley — 27 Brunswick Street\n\n"
-    "#brisbane #brisbanebusiness #brisbanemums #brisbanephotographer "
-    "#brisbanebeauty #brisbanesalon #brisbaneskin #brisbanebeautyclinic "
-    "#brisbanefacials #brisbanecosmeticclinic #brisbaneaesthetics "
-    "#picosurelaser #picowaylaser #skinneedlingbrisbane "
-    "#hifubrisbane #iplhairremovalbrisbane #acnescarsbrisbane "
-    "#brisbanebeautybloggers #brisbanemakeupartist #australianbeautyclinic"
+    "📍 Annerley — 69 Juliette Street (Brisbane Southside)\n"
+    "📍 Fortitude Valley — 27 Brunswick Street"
 )
+
+# --- Local-first hashtags ---------------------------------------------------
+# Goal: be discovered by real Brisbane locals who can actually walk in and book,
+# NOT by overseas device fans, other clinics, or follow-for-follow peers. So we
+# deliberately DROP: giant catch-all tags (#brisbane), peer/networker tags
+# (#brisbanemakeupartist, #brisbanebeautybloggers, #brisbanephotographer), and
+# global device tags (#picowaylaser). Suburb-level tags carry the strongest
+# local intent, backed by "service + Brisbane" tags people actually search when
+# looking for a clinic near them.
+
+# Always included: the two clinic suburbs, the region, and the strongest
+# local-intent service tags.
+LOCAL_CORE_TAGS = [
+    "#annerley", "#fortitudevalley", "#brisbanesouthside",
+    "#skinclinicbrisbane", "#brisbanecosmeticclinic", "#brisbaneaesthetics",
+]
+
+# Rotated per post (a different subset each time) so the block is not identical
+# on every post — a repeated wall of tags can suppress reach — while every
+# option stays local (a nearby suburb) or local-service intent.
+LOCAL_ROTATING_TAGS = [
+    # suburbs near Annerley (southside, 4103) and Fortitude Valley (inner city, 4006)
+    "#woolloongabba", "#westendbrisbane", "#southbrisbane", "#greenslopes",
+    "#coorparoo", "#tarragindi", "#moorooka", "#yeronga", "#kangaroopoint",
+    "#newfarmbrisbane", "#teneriffe", "#springhillbrisbane", "#brisbanenorthside",
+    # service + Brisbane search intent
+    "#brisbaneskinclinic", "#brisbaneskincare", "#brisbanefacials",
+    "#brisbanebeautyclinic", "#brisbanelaserclinic", "#skinneedlingbrisbane",
+    "#iplbrisbane", "#hifubrisbane", "#acnescarsbrisbane", "#brisbaneskin",
+    "#hydrafacialbrisbane",
+]
+
+
+def build_local_hashtags(seed_text, rotating_count=12):
+    """Return a local-first hashtag block. The core suburb/service tags are
+    always present; a rotating subset of nearby-suburb and service tags is drawn
+    from a stable per-asset seed, so the same asset stays consistent across
+    retries while different assets vary (keeps the block from being identical on
+    every post, which can hurt reach)."""
+    rng = random.Random(seed_text or "")
+    pool = list(LOCAL_ROTATING_TAGS)
+    rng.shuffle(pool)
+    tags = LOCAL_CORE_TAGS + pool[:rotating_count]
+    return " ".join(tags)
+
+
+def compose_caption(body, brief_text):
+    """Body + fixed contact/CTA block + a rotated local-first hashtag block."""
+    return f"{body}\n\n{CONTACT_FOOTER}\n\n{build_local_hashtags(brief_text)}"
 
 
 def generate_caption(brief_text, image_uris=None):
@@ -464,6 +543,7 @@ Requirements:
 - Length: short to medium
 - Make it suitable for an Instagram post
 - Write ONLY the caption body. Do NOT include hashtags, any call to action, booking instructions, links, phone numbers, email, or address (a fixed footer with all of that is added automatically after your text)
+- Speak to a LOCAL Brisbane audience so nearby residents feel this is their neighbourhood clinic: where it reads naturally, root it in the local area (Brisbane's southside, Annerley, Fortitude Valley, "local to you"). Do not stuff suburb names or sound like an ad.
 - No medical claims and no guaranteed results
 
 {COMPLIANCE_RULES}
@@ -484,6 +564,7 @@ Requirements:
 - Length: short to medium
 - Make it suitable for an Instagram post
 - Write ONLY the caption body. Do NOT include hashtags, any call to action, booking instructions, links, phone numbers, email, or address (a fixed footer with all of that is added automatically after your text)
+- Speak to a LOCAL Brisbane audience so nearby residents feel this is their neighbourhood clinic: where it reads naturally, root it in the local area (Brisbane's southside, Annerley, Fortitude Valley, "local to you"). Do not stuff suburb names or sound like an ad.
 - No medical claims and no guaranteed results
 
 {COMPLIANCE_RULES}
@@ -500,7 +581,7 @@ Requirements:
                 input=model_input
             )
             body = scrub_caption(response.output_text.strip())
-            return f"{body}\n\n{CAPTION_FOOTER}"
+            return compose_caption(body, brief_text)
         except Exception as e:
             last_error = e
 
@@ -516,7 +597,7 @@ Requirements:
     # on-brand template caption so the post still publishes instead of failing.
     print(f"WARNING: caption generation unavailable ({last_error}); using brand template caption.")
     body = scrub_caption(brand_fallback_caption(brief_text))
-    return f"{body}\n\n{CAPTION_FOOTER}"
+    return compose_caption(body, brief_text)
 
 
 # =========================
@@ -595,24 +676,24 @@ def post_with_retry(url, payload, timeout=60, label="Instagram Graph request"):
 
 def create_media_container(image_url, caption):
     url = f"{GRAPH_BASE}/{IG_USER_ID}/media"
-    payload = {
+    payload = with_location({
         "image_url": image_url,
         "caption": caption,
         "access_token": PAGE_ACCESS_TOKEN,
-    }
-    resp = post_with_retry(url, payload, timeout=60, label="create_media_container")
+    })
+    resp = create_container_safe(url, payload, label="create_media_container")
     return resp.json()
 
 
 def create_video_media_container(video_url, caption):
     url = f"{GRAPH_BASE}/{IG_USER_ID}/media"
-    payload = {
+    payload = with_location({
         "media_type": "REELS",
         "video_url": video_url,
         "caption": caption,
         "access_token": PAGE_ACCESS_TOKEN,
-    }
-    resp = post_with_retry(url, payload, timeout=60, label="create_video_media_container")
+    })
+    resp = create_container_safe(url, payload, label="create_video_media_container")
     return resp.json()
 
 
@@ -684,13 +765,13 @@ def create_video_container_resumable(caption):
     # Ask Instagram for a resumable upload container so we can send the video
     # bytes directly (WordPress blocks Instagram's video fetcher).
     url = f"{GRAPH_BASE}/{IG_USER_ID}/media"
-    payload = {
+    payload = with_location({
         "media_type": "REELS",
         "upload_type": "resumable",
         "caption": caption,
         "access_token": PAGE_ACCESS_TOKEN,
-    }
-    resp = post_with_retry(url, payload, timeout=60, label="create_video_container_resumable")
+    })
+    resp = create_container_safe(url, payload, label="create_video_container_resumable")
     return resp.json()
 
 
