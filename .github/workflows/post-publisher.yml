@@ -68,6 +68,11 @@ on:
           - ""
           - video
           - photo
+      test_location_id:
+        description: "Override IG_LOCATION_ID for this run only (to test a geotag)"
+        required: false
+        default: ""
+        type: string
   schedule:
     # 5 daily feed posts, all in Brisbane (AEST, UTC+10) prime-engagement windows.
     # Times are UTC; Brisbane = UTC + 10h.
@@ -137,7 +142,7 @@ jobs:
           ONEDRIVE_FAILED_FOLDER_NAME: ${{ secrets.ONEDRIVE_FAILED_FOLDER_NAME }}
           ONEDRIVE_USER_EMAIL: ${{ secrets.ONEDRIVE_USER_EMAIL }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
-          IG_LOCATION_ID: ${{ secrets.IG_LOCATION_ID }}
+          IG_LOCATION_ID: ${{ inputs.test_location_id || secrets.IG_LOCATION_ID }}
           PAGE_ACCESS_TOKEN: ${{ secrets.PAGE_ACCESS_TOKEN }}
           META_GRAPH_API_VERSION: ${{ secrets.META_GRAPH_API_VERSION }}
           DRY_RUN: ${{ secrets.DRY_RUN }}
@@ -208,7 +213,7 @@ jobs:
           ONEDRIVE_FAILED_FOLDER_NAME: ${{ secrets.ONEDRIVE_FAILED_FOLDER_NAME }}
           ONEDRIVE_USER_EMAIL: ${{ secrets.ONEDRIVE_USER_EMAIL }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
-          IG_LOCATION_ID: ${{ secrets.IG_LOCATION_ID }}
+          IG_LOCATION_ID: ${{ inputs.test_location_id || secrets.IG_LOCATION_ID }}
           PAGE_ACCESS_TOKEN: ${{ secrets.PAGE_ACCESS_TOKEN }}
           META_GRAPH_API_VERSION: ${{ secrets.META_GRAPH_API_VERSION }}
           DRY_RUN: ${{ secrets.DRY_RUN }}
