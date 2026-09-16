@@ -20,6 +20,7 @@ on:
           - insights_report
           - retry_failed
           - find_location
+          - rank
       location_query:
         description: "Place name to search (find_location only)"
         required: false
@@ -83,6 +84,7 @@ on:
     # ChatGPT and uploaded to the drop folder.)
     - cron: "0 23 * * 1"
     - cron: "15 */6 * * *"
+    - cron: "0 20 * * 1"    # weekly: rank top performers (before the Tue report)
 
 permissions:
   contents: read
@@ -241,6 +243,8 @@ jobs:
             PUBLISHER_TYPE="insights_report"
           elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "15 */6 * * *" ]; then
             PUBLISHER_TYPE="retry_failed"
+          elif [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 20 * * 1" ]; then
+            PUBLISHER_TYPE="rank"
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             PUBLISHER_TYPE="${{ inputs.publisher_type }}"
           else
@@ -251,6 +255,8 @@ jobs:
 
           if [ "${PUBLISHER_TYPE}" = "find_location" ]; then
             python find_ig_location.py
+          elif [ "${PUBLISHER_TYPE}" = "rank" ]; then
+            python rank_top_performers.py
           elif [ "${PUBLISHER_TYPE}" = "token_check" ]; then
             python token_maintenance.py
           elif [ "${PUBLISHER_TYPE}" = "insights_check" ]; then
