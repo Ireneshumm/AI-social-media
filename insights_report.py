@@ -94,6 +94,62 @@ def ig_top_posts(token, lookback=25, top_n=5):
     return scored[:top_n]
 
 
+def _parse_demographics(data):
+    """Pull {dimension: value} out of a follower_demographics insights response."""
+    out = {}
+    try:
+        for metric in data.get("data", []):
+            tv = metric.get("total_value") or {}
+            for bd in tv.get("breakdowns", []):
+                for r in bd.get("results", []):
+                    dims = r.get("dimension_values") or []
+                    if dims:
+                        out[dims[0]] = r.get("value") or 0
+    except (AttributeError, TypeError):
+        pass
+    return out
+
+
+def ig_audience_geo(token):
+    """Return (top_cities, australia_share, brisbane_share) for the account's
+    followers, or (None, None, None) when demographics are unavailable (needs
+    100+ followers and the right permission)."""
+    def fetch(breakdown):
+        return try_get(
+            f"{IG_USER_ID}/insights",
+            {
+                "metric": "follower_demographics",
+                "period": "lifetime",
+                "metric_type": "total_value",
+                "breakdown": breakdown,
+                "access_token": token,
+            },
+            f"ig follower_demographics {breakdown}",
+        )
+
+    cities = _parse_demographics(fetch("city") or {})
+    countries = _parse_demographics(fetch("country") or {})
+
+    if not cities and not countries:
+        return None, None, None
+
+    top_cities = sorted(cities.items(), key=lambda kv: kv[1], reverse=True)[:5]
+
+    au_share = None
+    if countries:
+        total_c = sum(countries.values()) or 0
+        au = countries.get("AU", 0)
+        au_share = round(100 * au / total_c) if total_c else None
+
+    bne_share = None
+    if cities:
+        total_city = sum(cities.values()) or 0
+        bne = sum(v for k, v in cities.items() if "brisbane" in k.lower())
+        bne_share = round(100 * bne / total_city) if total_city else None
+
+    return top_cities, au_share, bne_share
+
+
 def short_caption(caption, limit=70):
     if not caption:
         return "(无文字)"
@@ -143,6 +199,21 @@ def build_report(token, page_id):
                 lines.append(f"      {post['permalink']}")
     else:
         lines.append("\n  (帖子表现数据暂时读取不到)")
+
+    # --- Audience geography (are the followers local?) ---
+    top_cities, au_share, bne_share = ig_audience_geo(token)
+    lines.append("\n  📍 粉丝地区 (是否本地):")
+    if top_cities is None:
+        lines.append("     (暂时读取不到 — 需满 100 粉丝且账号授权)")
+    else:
+        if au_share is not None:
+            lines.append(f"     🇦🇺 澳洲占比 : {au_share}%")
+        if bne_share is not None:
+            lines.append(f"     🏙️ 布里斯班占比: {bne_share}%")
+        if top_cities:
+            lines.append("     主要城市:")
+            for city, val in top_cities:
+                lines.append(f"       · {city}: {val}")
 
     # --- Facebook (basic only) ---
     fb = try_get(

@@ -26,6 +26,7 @@ from video_transcode import ensure_h264
 from media_analysis import get_caption_image_uris
 from compliance import COMPLIANCE_RULES, scrub_caption, filename_is_noncompliant
 from image_hosting import upload_to_imgbb
+from onedrive_store import read_json, write_json
 
 load_dotenv()
 
@@ -59,6 +60,64 @@ DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
 # publisher with publisher_type=find_location). When unset, posts publish with
 # no location, exactly as before.
 IG_LOCATION_ID = (os.getenv("IG_LOCATION_ID") or "").strip()
+
+
+# --- Performance-based recycling --------------------------------------------
+# Each successful publish is logged (media_id -> source asset) to OneDrive so a
+# separate ranking job (rank_top_performers.py) can join it with Instagram
+# insights and write the list of top-performing assets. Those top assets are
+# then recycled MORE often than the rest: instead of appearing once per full
+# library cycle, a top asset is also injected at fixed slots within the grid
+# cycle, so a strong video can run ~3x per 100 posts (e.g. at the 30th, 60th and
+# 90th) while ordinary videos still cycle once.
+PERFORMANCE_LOG_FILE = "performance_log.json"
+TOP_ASSETS_FILE = "top_assets.json"
+PERFORMANCE_LOG_MAX = int(os.getenv("PERFORMANCE_LOG_MAX", "400"))
+# Length of the grid cycle the boost slots are measured against.
+BOOST_CYCLE = int(os.getenv("BOOST_CYCLE", "100"))
+# Positions within each cycle where a top performer is injected (default 30/60/90).
+BOOST_SLOTS = {
+    int(s.strip())
+    for s in (os.getenv("BOOST_SLOTS") or "30,60,90").split(",")
+    if s.strip().isdigit()
+}
+
+
+def log_publish_performance(token, media_id, asset_name, media_kind):
+    """Append a {media_id, name, kind, ts} record to the OneDrive performance
+    log so posts can later be ranked by their Instagram reach. Best-effort: the
+    post has already published, so any failure here is only logged."""
+    if not media_id or not asset_name:
+        return
+    try:
+        log = read_json(token, PERFORMANCE_LOG_FILE, default=[]) or []
+        if not isinstance(log, list):
+            log = []
+        log.append({
+            "media_id": str(media_id),
+            "name": asset_name,
+            "kind": media_kind,
+            "ts": datetime.now().astimezone().isoformat(),
+        })
+        # Keep the file bounded to the most recent entries.
+        if len(log) > PERFORMANCE_LOG_MAX:
+            log = log[-PERFORMANCE_LOG_MAX:]
+        write_json(token, PERFORMANCE_LOG_FILE, log)
+        print(f"Performance log: recorded {asset_name} -> media {media_id}.")
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING: could not update performance log ({e}).")
+
+
+def load_top_assets(token):
+    """Return the set of top-performing asset filenames (as they appear in the
+    posted/ archive). Empty set when no ranking has been produced yet."""
+    try:
+        data = read_json(token, TOP_ASSETS_FILE, default=[]) or []
+        names = data.get("names") if isinstance(data, dict) else data
+        return {str(n) for n in (names or [])}
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING: could not load top assets ({e}).")
+        return set()
 
 
 def with_location(payload):
@@ -986,6 +1045,10 @@ def attempt_publish(token, selected_post):
                 ]),
             )
 
+    # The name under which this asset now lives in the posted/ archive — this is
+    # the key the performance log and the top-assets list are matched on.
+    posted_name = selected_post["media"]["name"]
+
     if selected_post.get("recycled"):
         # A repost of an already-archived video — leave the file in place, but bump
         # its timestamp so it goes to the back of the rotation (won't repeat until
@@ -1001,7 +1064,13 @@ def attempt_publish(token, selected_post):
         print("Archive completed.")
         print(f"Moved to: {archive_result['target_folder']}")
         print(f"Media: {archive_result['media_name']}")
+        posted_name = archive_result.get("media_name") or posted_name
         print()
+
+    # Record which asset produced which Instagram post, so it can later be ranked
+    # by reach and recycled more often if it performs well. Never fails the post.
+    if not DRY_RUN:
+        log_publish_performance(token, publish_result.get("media_id"), posted_name, media_kind)
 
     return publish_result
 
@@ -1066,6 +1135,19 @@ def main():
         # to a photo — keeping the grid video-heavy.
         recycle = recyclable_videos(posted_children)  # oldest-posted first
 
+        # Top performers (by Instagram reach) are recycled more often: at fixed
+        # slots within the grid cycle we inject a top-performing video instead of
+        # the plain oldest one, so a strong video runs ~3x per cycle while the
+        # rest still cycle once. No-op until a ranking has been produced.
+        top_assets = load_top_assets(token)
+        cycle_pos = (posted_count % BOOST_CYCLE) if BOOST_CYCLE else -1
+        boost_now = cycle_pos in BOOST_SLOTS and bool(top_assets)
+        if top_assets:
+            print(
+                f"Top performers loaded: {len(top_assets)} asset(s); grid cycle "
+                f"position {cycle_pos}/{BOOST_CYCLE}; boost slot = {boost_now}."
+            )
+
         pool = matched
         recycling = False
         if want_kind:
@@ -1084,7 +1166,15 @@ def main():
             # (skip the last couple of topics for variety), so the whole library
             # cycles through before any video repeats.
             eligible = [m for m in pool if content_group(m["media"]["name"]) not in recent_groups]
-            first = (eligible or pool)[0]
+            ranked = eligible or pool
+            # On a boost slot, prefer the least-recently-shown TOP performer so
+            # strong videos get extra airings; otherwise take the plain oldest.
+            top_ranked = [m for m in ranked if m["media"]["name"] in top_assets] if boost_now else []
+            if top_ranked:
+                first = top_ranked[0]
+                print(f"Boost slot {cycle_pos}: reposting top performer {first['media']['name']}.")
+            else:
+                first = ranked[0]
         else:
             first = pick_with_variety(pool, recent_groups, random)
         tag = " (recycled repost)" if first.get("recycled") else ""
