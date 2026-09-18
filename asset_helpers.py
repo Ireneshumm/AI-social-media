@@ -42,6 +42,12 @@ AI_GENERATED_PREFIX = "ai_"
 # published as permanent Reels (feed), not as 24-hour Stories.
 REPOST_PREFIX = "repost_"
 
+# AI-made videos intended for the FEED (as permanent Reels). Like Stories they
+# are 9:16, so without a marker they would be routed to Stories; this prefix
+# sends them to the feed as Reels instead. Kept distinct from AI_GENERATED_PREFIX
+# ("ai_") on purpose, so the generated-content purge never deletes these uploads.
+FEED_VIDEO_PREFIX = "reel_"
+
 
 def is_ai_generated(filename):
     return bool(filename) and Path(filename).name.lower().startswith(AI_GENERATED_PREFIX)
@@ -49,6 +55,10 @@ def is_ai_generated(filename):
 
 def is_repost(filename):
     return bool(filename) and Path(filename).name.lower().startswith(REPOST_PREFIX)
+
+
+def is_feed_video(filename):
+    return bool(filename) and Path(filename).name.lower().startswith(FEED_VIDEO_PREFIX)
 
 
 def get_item_dimensions(item):
@@ -83,8 +93,10 @@ def is_story_media(item):
     fall back to the generator's filename marker ("_story_"); anything else
     defaults to feed. Always returns a bool so the story/feed split is exclusive
     and total — every file is claimed by exactly one channel."""
-    # Repurposed clips are 9:16 but go out as permanent Reels, never Stories.
-    if is_repost(item.get("name") or ""):
+    # Repurposed clips and AI-made feed videos are 9:16 but go out as permanent
+    # Reels in the feed, never as 24-hour Stories.
+    name0 = item.get("name") or ""
+    if is_repost(name0) or is_feed_video(name0):
         return False
     vertical = is_vertical_item(item)
     if vertical is not None:
@@ -101,7 +113,8 @@ def content_group(filename):
     parts = [p for p in re.split(r"[-_]+", stem) if p]
     if not parts:
         return stem
-    if parts[0] == "ai" and len(parts) >= 2:
+    # Skip a leading generator/routing prefix so the topic word drives variety.
+    if parts[0] in ("ai", "reel") and len(parts) >= 2:
         return parts[1]
     return parts[0]
 
@@ -142,7 +155,7 @@ def filename_to_brief(filename):
 # Tokens that appear in filenames but are not part of the treatment name:
 # generator prefixes/modes/layouts and file/technical markers.
 _CAPTION_STOPWORDS = {
-    "ai", "try", "repost", "ig", "ios", "mp4", "mov", "jpg", "jpeg", "png", "webp",
+    "ai", "try", "repost", "reel", "ig", "ios", "mp4", "mov", "jpg", "jpeg", "png", "webp",
     "person", "device", "campaign", "hero", "feed", "story", "draft", "final", "copy",
 }
 # Preserve the correct casing of common device/treatment acronyms.
