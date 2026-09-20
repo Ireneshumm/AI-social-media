@@ -1149,6 +1149,24 @@ def main():
                 f"position {cycle_pos}/{BOOST_CYCLE}; boost slot = {boost_now}."
             )
 
+        # How repeats are chosen:
+        #  - Below REPEAT_TOP_ONLY_ABOVE distinct archived videos, recycle from
+        #    EVERYTHING so the whole library airs before anything repeats (maximum
+        #    spacing — the priority while the library is still small).
+        #  - Once the archive is larger than that, recycle ONLY the top-viewed
+        #    set, so the repeats you do get are the best-performing videos.
+        # (Note: with a small library, repeats are unavoidable no matter what —
+        #  N distinct videos cannot fill more than N slots without repeating.)
+        REPEAT_TOP_ONLY_ABOVE = int(os.getenv("REPEAT_TOP_ONLY_ABOVE", "50"))
+        if top_assets and len(recycle) > REPEAT_TOP_ONLY_ABOVE:
+            top_recycle = [m for m in recycle if m["media"]["name"] in top_assets]
+            if top_recycle:
+                print(
+                    f"Archive has {len(recycle)} videos (> {REPEAT_TOP_ONLY_ABOVE}); "
+                    f"recycling only the top {len(top_recycle)} performer(s)."
+                )
+                recycle = top_recycle
+
         pool = matched
         recycling = False
         if want_kind:
