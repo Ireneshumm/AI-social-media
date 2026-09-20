@@ -141,6 +141,17 @@ def download_video(url):
         cmd += ["--cookies", "cookies.txt"]
         print("Using provided login cookies for download.")
 
+    # TikTok blocks the default webpage flow from datacenter IPs (GitHub
+    # runners), returning "Unexpected response from webpage request". Routing
+    # through the mobile API host usually bypasses that block.
+    if "tiktok" in url.lower():
+        cmd += [
+            "--extractor-args",
+            "tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com",
+            "--user-agent",
+            "com.zhiliaoapp.musically/2023600040 (Linux; U; Android 13; en_US; Pixel 7; Build/TQ2A.230505.002)",
+        ]
+
     cmd += ["-o", template, url]
     run(cmd)
 
