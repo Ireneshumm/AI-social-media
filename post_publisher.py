@@ -526,10 +526,11 @@ def parse_post_text(text_content):
 # are built separately and rotated below for local reach). The AI writes only
 # the body, so this keeps CTA, contact and locations identical on every post.
 CONTACT_FOOTER = (
+    "🇦🇺 In-clinic treatments in Brisbane, Australia only.\n\n"
     "All bookings are made online at https://www.rebornaesthetics.com.au/ — just click "
     "“Book Now”. If you’re unsure which treatment suits you, book a complimentary "
     "consultation for a personalised plan.\n\n"
-    "📞 0410 415 415\n"
+    "📞 0410 415 415 (Brisbane clinic)\n"
     "📧 info@rebornaesthetics.com.au\n"
     "🌐 www.rebornaesthetics.com.au\n\n"
     "📍 Annerley — 69 Juliette Street (Brisbane Southside)\n"
