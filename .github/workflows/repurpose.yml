@@ -68,12 +68,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # Use the yt-dlp NIGHTLY build: TikTok / Douyin / Instagram change their
-          # internal APIs constantly and the stable release lags, causing
-          # "Unexpected response from webpage request" download failures. Nightly
-          # tracks those fixes fastest. Falls back to stable if nightly is
-          # unavailable.
-          pip install --upgrade --pre "yt-dlp[default]" || pip install --upgrade yt-dlp
+          # TikTok / Douyin / Instagram change their internal APIs constantly and
+          # even the stable/nightly releases lag, causing "Unexpected response
+          # from webpage request" download failures. Install the yt-dlp master
+          # build straight from GitHub (fixes land there first), falling back to
+          # nightly, then stable, if that is unavailable.
+          pip install --upgrade --force-reinstall "yt-dlp[default] @ git+https://github.com/yt-dlp/yt-dlp.git" \
+            || pip install --upgrade --pre "yt-dlp[default]" \
+            || pip install --upgrade yt-dlp
+          yt-dlp --version || true
           pip install replicate
           # EasyOCR (with torch) auto-detects the subtitle region for the
           # region method; only install it when subtitles are being removed and
