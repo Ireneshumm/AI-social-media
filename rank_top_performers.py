@@ -42,9 +42,9 @@ TOP_ASSETS_FILE = "top_assets.json"
 
 # How many posts we need before ranking is meaningful, and how big the top list is.
 MIN_SAMPLE = int(os.getenv("RANK_MIN_SAMPLE", "8"))
-TOP_PERCENT = float(os.getenv("RANK_TOP_PERCENT", "0.30"))
+TOP_PERCENT = float(os.getenv("RANK_TOP_PERCENT", "0.50"))
 TOP_MIN = int(os.getenv("RANK_TOP_MIN", "3"))
-TOP_MAX = int(os.getenv("RANK_TOP_MAX", "12"))
+TOP_MAX = int(os.getenv("RANK_TOP_MAX", "50"))
 # Only rank videos — recycling (and therefore the boost) is video-based.
 RANK_KIND = os.getenv("RANK_KIND", "video")
 
