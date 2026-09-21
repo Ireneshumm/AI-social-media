@@ -27,6 +27,7 @@ from media_analysis import get_caption_image_uris
 from compliance import COMPLIANCE_RULES, scrub_caption, filename_is_noncompliant
 from image_hosting import upload_to_imgbb
 from onedrive_store import read_json, write_json
+from ai_caption import generate_caption_body
 
 load_dotenv()
 
@@ -587,75 +588,42 @@ def compose_caption(body, brief_text):
     return f"{body}\n\n{CONTACT_FOOTER}\n\n{build_local_hashtags(brief_text)}"
 
 
+def _build_caption_prompt(brief_text, has_images):
+    """The caption instructions. Written for a strong local-Brisbane hook; the
+    fixed footer (CTA, contact, hashtags) is added separately, so the model
+    writes only the body."""
+    source = (
+        "The attached image(s) are the actual post media (for a video, they are sampled "
+        "frames). Look at what is shown and write the caption about that content. Use this "
+        f"filename hint only as extra context, it may name the treatment: {brief_text}"
+        if has_images
+        else f"Use this content brief:\n{brief_text}"
+    )
+    return f"""You are the social media copywriter for Reborn Aesthetics, a premium medical-aesthetics clinic in Brisbane, Australia (clinics in Annerley and Fortitude Valley).
+
+{source}
+
+Write ONLY the Instagram caption body — engaging, premium, warm and human, the kind locals stop scrolling for.
+
+Requirements:
+- Open with a scroll-stopping first line (a hook — a question, a relatable moment, or a striking benefit). Not "At Reborn Aesthetics...".
+- Speak to LOCAL Brisbane women so nearby residents feel this is their neighbourhood clinic. Where it reads naturally, root it locally (Brisbane's southside, Annerley, Fortitude Valley, "local to you") — but do NOT stuff suburb names or sound like an ad.
+- Length: short to medium (roughly 2–5 short lines). A few tasteful emoji are fine.
+- Write ONLY the caption body. Do NOT include hashtags, calls to action, booking instructions, links, phone numbers, email, or address — a fixed footer with all of that is added automatically after your text.
+- No medical claims and no guaranteed results.
+
+{COMPLIANCE_RULES}"""
+
+
 def generate_caption(brief_text, image_uris=None):
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    prompt = _build_caption_prompt(brief_text, has_images=bool(image_uris))
+    body = generate_caption_body(prompt, image_uris=image_uris)
+    if body:
+        return compose_caption(scrub_caption(body), brief_text)
 
-    if image_uris:
-        prompt = f"""
-You are writing an Instagram caption for Reborn Aesthetics, a premium aesthetics clinic in Brisbane.
-
-The attached image(s) are the actual post media (for a video, they are sampled frames). Look at what is shown and write the caption about that content.
-Use this filename hint only as extra context, it may name the treatment: {brief_text}
-
-Requirements:
-- Base the caption on what you actually see in the image(s)
-- Tone: premium, warm, professional
-- Length: short to medium
-- Make it suitable for an Instagram post
-- Write ONLY the caption body. Do NOT include hashtags, any call to action, booking instructions, links, phone numbers, email, or address (a fixed footer with all of that is added automatically after your text)
-- Speak to a LOCAL Brisbane audience so nearby residents feel this is their neighbourhood clinic: where it reads naturally, root it in the local area (Brisbane's southside, Annerley, Fortitude Valley, "local to you"). Do not stuff suburb names or sound like an ad.
-- No medical claims and no guaranteed results
-
-{COMPLIANCE_RULES}
-"""
-        content = [{"type": "input_text", "text": prompt}]
-        for uri in image_uris:
-            content.append({"type": "input_image", "image_url": uri})
-        model_input = [{"role": "user", "content": content}]
-    else:
-        prompt = f"""
-You are writing an Instagram caption for Reborn Aesthetics, a premium aesthetics clinic in Brisbane.
-
-Use the following content brief:
-{brief_text}
-
-Requirements:
-- Tone: premium, warm, professional
-- Length: short to medium
-- Make it suitable for an Instagram post
-- Write ONLY the caption body. Do NOT include hashtags, any call to action, booking instructions, links, phone numbers, email, or address (a fixed footer with all of that is added automatically after your text)
-- Speak to a LOCAL Brisbane audience so nearby residents feel this is their neighbourhood clinic: where it reads naturally, root it in the local area (Brisbane's southside, Annerley, Fortitude Valley, "local to you"). Do not stuff suburb names or sound like an ad.
-- No medical claims and no guaranteed results
-
-{COMPLIANCE_RULES}
-"""
-        model_input = prompt
-
-    retry_delays = [5, 10]
-    last_error = None
-
-    for attempt in range(1, 4):
-        try:
-            response = client.responses.create(
-                model=OPENAI_MODEL,
-                input=model_input
-            )
-            body = scrub_caption(response.output_text.strip())
-            return compose_caption(body, brief_text)
-        except Exception as e:
-            last_error = e
-
-            if attempt < 3:
-                delay = retry_delays[attempt - 1]
-                print(f"WARNING: OpenAI caption attempt {attempt} failed: {e}")
-                print(f"Retrying in {delay} second(s)...")
-                time.sleep(delay)
-            else:
-                print(f"FAIL: OpenAI caption attempt {attempt} failed: {e}")
-
-    # OpenAI is unavailable (e.g. out of credit). Degrade gracefully with an
-    # on-brand template caption so the post still publishes instead of failing.
-    print(f"WARNING: caption generation unavailable ({last_error}); using brand template caption.")
+    # No AI provider available (e.g. no keys / all out of credit). Degrade
+    # gracefully with an on-brand template so the post still publishes.
+    print("WARNING: no AI caption available; using brand template caption.")
     body = scrub_caption(brand_fallback_caption(brief_text))
     return compose_caption(body, brief_text)
 

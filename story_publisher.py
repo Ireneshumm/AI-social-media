@@ -27,6 +27,7 @@ from facebook_publish import publish_facebook_story, FB_PUBLISH_ENABLED
 from video_transcode import ensure_h264
 from media_analysis import get_caption_image_uris
 from compliance import COMPLIANCE_RULES, scrub_caption, filename_is_noncompliant
+from ai_caption import generate_caption_body
 from image_hosting import upload_to_imgbb
 
 load_dotenv()
@@ -423,83 +424,35 @@ def parse_story_text(text_content):
 
 
 def generate_story_caption(brief_text, image_uris=None):
-    client = OpenAI(api_key=OPENAI_API_KEY)
-
     if image_uris:
-        prompt = f"""
-You are writing a very short Instagram Story caption for Reborn Aesthetics, a premium aesthetics clinic in Brisbane.
-
-The attached image(s) are the actual story media (for a video, they are sampled frames). Look at what is shown and write the caption about that content.
-Use this filename hint only as extra context, it may name the treatment: {brief_text}
-
-Requirements:
-- Base the caption on what you actually see in the image(s)
-- Tone: premium, warm, professional
-- Length: very short
-- Make it suitable for Instagram Story overlay text
-- No hashtags
-- No medical claims
-- No overpromising results
-- Where natural, give it a local Brisbane feel (Annerley / Fortitude Valley / Brisbane's southside) so nearby locals recognise it as their neighbourhood clinic
-- Use a soft call to action only if it feels natural
-- Return only the caption text
-
-{COMPLIANCE_RULES}
-"""
-        content = [{"type": "input_text", "text": prompt}]
-        for uri in image_uris:
-            content.append({"type": "input_image", "image_url": uri})
-        model_input = [{"role": "user", "content": content}]
+        source = (
+            "The attached image(s) are the actual story media (for a video, they are sampled "
+            "frames). Look at what is shown and write about that content. Use this filename "
+            f"hint only as extra context, it may name the treatment: {brief_text}"
+        )
     else:
-        prompt = f"""
-You are writing a very short Instagram Story caption for Reborn Aesthetics, a premium aesthetics clinic in Brisbane.
+        source = f"Use this content brief:\n{brief_text}"
 
-Use the following content brief:
-{brief_text}
+    prompt = f"""You are writing a very short Instagram Story overlay caption for Reborn Aesthetics, a premium medical-aesthetics clinic in Brisbane, Australia (Annerley & Fortitude Valley).
+
+{source}
 
 Requirements:
-- Tone: premium, warm, professional
-- Length: very short
-- Make it suitable for Instagram Story overlay text
-- No hashtags
-- No medical claims
-- No overpromising results
-- Where natural, give it a local Brisbane feel (Annerley / Fortitude Valley / Brisbane's southside) so nearby locals recognise it as their neighbourhood clinic
-- Use a soft call to action only if it feels natural
-- Return only the caption text
+- Very short (a few words to one line), suitable as Story overlay text.
+- Premium, warm, human tone.
+- Where natural, give it a local Brisbane feel (Annerley / Fortitude Valley / southside) so nearby locals recognise it as their neighbourhood clinic.
+- No hashtags, no medical claims, no overpromising.
+- A soft call to action only if it feels natural.
+- Return only the caption text.
 
-{COMPLIANCE_RULES}
-"""
-        model_input = prompt
+{COMPLIANCE_RULES}"""
 
-    retry_delays = [5, 10, 20]
-    last_error = None
+    body = generate_caption_body(prompt, image_uris=image_uris)
+    if body:
+        return scrub_caption(body)
 
-    for attempt in range(1, 4):
-        try:
-            response = client.responses.create(
-                model=OPENAI_MODEL,
-                input=model_input
-            )
-            return scrub_caption(response.output_text.strip())
-        except Exception as e:
-            last_error = e
-            print(f"OpenAI caption attempt {attempt} failed: {e}")
-            print(f"Exception type: {type(e).__name__}")
-            print(f"Exception repr: {repr(e)}")
-
-            if e.__cause__ is not None:
-                print(f"Exception cause: {e.__cause__}")
-                print(f"Exception cause repr: {repr(e.__cause__)}")
-
-            if attempt < 3:
-                delay = retry_delays[attempt - 1]
-                print(f"Retrying in {delay} second(s)...")
-                time.sleep(delay)
-
-    # OpenAI is unavailable (e.g. out of credit). Degrade gracefully with a short
-    # on-brand template caption so the story still publishes instead of failing.
-    print(f"WARNING: caption generation unavailable ({last_error}); using brand template caption.")
+    # No AI provider available - short on-brand template so the story still posts.
+    print("WARNING: no AI caption available; using brand template caption.")
     return scrub_caption(brand_fallback_caption(brief_text, short=True))
 
 
