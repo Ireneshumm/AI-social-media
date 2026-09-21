@@ -592,7 +592,12 @@ def main():
 
     except subprocess.CalledProcessError as e:
         print("\nERROR: a processing step failed:", e)
-        print("If it was the download, the link may be private/region-locked or need login (Instagram often does).")
+        print("If it was the download, the most likely cause is an EXPIRED TikTok login:")
+        print("  → Refresh the YTDLP_COOKIES secret with a fresh cookies.txt exported")
+        print("    from a browser logged in to TikTok. ('Video not available / status")
+        print("    code 0' with cookies present usually means the saved login expired,")
+        print("    or TikTok is rate-limiting this datacenter IP — not that the video is gone.)")
+        print("  Other possibilities: the link is genuinely private/region-locked/deleted.")
         sys.exit(1)
     except Exception as e:
         print("\nERROR:", str(e))
