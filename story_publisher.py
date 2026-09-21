@@ -542,6 +542,43 @@ def create_story_media_container(image_url, caption):
     return resp.json()
 
 
+def _is_transient_media_error(exc):
+    """True for Instagram's transient 'took too long to download the media'
+    (error subcode 2207003 / code -2) — an IG-side fetch hiccup, not a real
+    problem with our image, so it is worth a patient retry."""
+    resp = getattr(exc, "response", None)
+    text = (getattr(resp, "text", "") or "") + " " + str(exc)
+    return (
+        "2207003" in text
+        or "It takes too long to download" in text
+        or '"code":-2' in text
+        or '"is_transient":true' in text
+    )
+
+
+def create_story_image_container_resilient(image_url, caption):
+    """Create a story image container, retrying with a long, patient backoff when
+    Instagram times out fetching the image (transient error 2207003). A momentary
+    IG hiccup then no longer fails the whole story."""
+    delays = [20, 40, 60]
+    last_error = None
+    for attempt in range(1, len(delays) + 2):
+        try:
+            return create_story_media_container(image_url, caption)
+        except Exception as e:  # noqa: BLE001
+            last_error = e
+            if attempt <= len(delays) and _is_transient_media_error(e):
+                delay = delays[attempt - 1]
+                print(
+                    f"WARNING: Instagram timed out fetching the story image (transient); "
+                    f"waiting {delay}s and retrying (attempt {attempt}/{len(delays)})."
+                )
+                time.sleep(delay)
+                continue
+            raise
+    raise last_error
+
+
 def create_story_video_media_container(video_url):
     url = f"{GRAPH_BASE}/{IG_USER_ID}/media"
     payload = {
@@ -672,7 +709,7 @@ def publish_instagram_story(media_url, caption, media_kind, media_path=None):
         upload_video_bytes(creation_id, container.get("uri"), media_path)
         wait_for_container_ready(creation_id)
     else:
-        container = create_story_media_container(media_url, caption)
+        container = create_story_image_container_resilient(media_url, caption)
         creation_id = container["id"]
         time.sleep(5)
 
