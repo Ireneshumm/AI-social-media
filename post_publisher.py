@@ -1163,7 +1163,14 @@ def main():
             else:
                 first = ranked[0]
         else:
-            first = pick_with_variety(pool, recent_groups, random)
+            # Prefer the NEWEST fresh upload so a just-added reel goes out first;
+            # fall back to the variety pick if timestamps are unavailable.
+            fresh_newest = sorted(
+                pool,
+                key=lambda m: (m["media"].get("lastModifiedDateTime") or ""),
+                reverse=True,
+            )
+            first = fresh_newest[0] if fresh_newest else pick_with_variety(pool, recent_groups, random)
         tag = " (recycled repost)" if first.get("recycled") else ""
         print(
             f"{len(matched)} queued + {len(recycle)} recyclable video(s); "
