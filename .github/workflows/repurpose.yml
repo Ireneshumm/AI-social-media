@@ -1,6 +1,10 @@
 name: Reborn Repurpose (link to draft)
 
 on:
+  schedule:
+    # Retry failed AUTO reposts saved in the queue (no video_url -> retry runner).
+    # GitHub throttles frequent crons, so this fires ~every 20-40 min in practice.
+    - cron: "*/20 * * * *"
   workflow_dispatch:
     inputs:
       video_url:
@@ -120,4 +124,10 @@ jobs:
           ONEDRIVE_DRAFTS_FOLDER_NAME: ${{ secrets.ONEDRIVE_DRAFTS_FOLDER_NAME }}
           ONEDRIVE_USER_EMAIL: ${{ secrets.ONEDRIVE_USER_EMAIL }}
           REPURPOSE_TARGET_FOLDER: ${{ secrets.REPURPOSE_TARGET_FOLDER }}
-        run: python repurpose.py
+        run: |
+          if [ -z "${VIDEO_URL}" ]; then
+            echo "No video_url (scheduled run) -> retrying queued reposts."
+            python retry_reposts.py
+          else
+            python repurpose.py
+          fi
