@@ -110,7 +110,10 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
-          STORIES_PER_RUN: ${{ secrets.STORIES_PER_RUN }}
+          # Publish 3 stories per run. GitHub throttles the hourly cron to ~5-6
+          # fires/day, so 3/run gives ~15-18 stories/day (>=100/week), which the
+          # large story archive comfortably supports.
+          STORIES_PER_RUN: "3"
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
           META_APP_ID: ${{ secrets.META_APP_ID }}
           META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
