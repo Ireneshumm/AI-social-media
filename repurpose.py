@@ -135,24 +135,22 @@ def _download_via_tikwm(url):
     ua = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
           "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
 
-    # Short links (v.douyin.com/xxx, vt.tiktok.com/xxx) often fail tikwm's URL
-    # parser as-is. Follow the redirect and, for Douyin, reduce it to the clean
-    # canonical form https://www.douyin.com/video/<id> (the full share URL is
-    # huge and tikwm 403s on it).
+    # DOUYIN ONLY: resolve the short link to the clean canonical form
+    # https://www.douyin.com/video/<id> (its full share URL is huge and tikwm
+    # 403s on it). TikTok short links (vt.tiktok.com/xxx) are passed to tikwm
+    # AS-IS — tikwm accepts them, and resolving them to the full
+    # tiktok.com/@user/video/id?_r=...&_t=... form makes tikwm 403.
     query_url = url
-    try:
-        rr = requests.get(url, headers={"User-Agent": ua}, allow_redirects=True, timeout=20)
-        final = rr.url if (rr.url and rr.url.startswith("http")) else url
-        if "douyin" in final.lower() or "douyin" in url.lower():
+    if "douyin" in url.lower():
+        try:
+            rr = requests.get(url, headers={"User-Agent": ua}, allow_redirects=True, timeout=20)
+            final = rr.url if (rr.url and rr.url.startswith("http")) else url
             m = re.search(r"/video/(\d+)", final) or re.search(r"(\d{15,})", final)
             if m:
                 query_url = f"https://www.douyin.com/video/{m.group(1)}"
-        elif final != url:
-            query_url = final
-        if query_url != url:
-            print(f"Resolved short link -> {query_url}")
-    except Exception as e:  # noqa: BLE001
-        print(f"(could not pre-resolve short link: {e}; using original)")
+                print(f"Resolved Douyin link -> {query_url}")
+        except Exception as e:  # noqa: BLE001
+            print(f"(could not pre-resolve Douyin link: {e}; using original)")
 
     for attempt in range(1, 4):
         try:
