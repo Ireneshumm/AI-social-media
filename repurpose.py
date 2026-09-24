@@ -152,7 +152,13 @@ def _download_via_tikwm(url):
         except Exception as e:  # noqa: BLE001
             print(f"(could not pre-resolve Douyin link: {e}; using original)")
 
-    for attempt in range(1, 4):
+    import time
+    # tikwm's free API rate-limits by IP: firing several reposts in quick
+    # succession makes it answer 403. Retry with longer, escalating waits so the
+    # rate-limit window clears (short 5s waits are not enough for a 403).
+    delays = [20, 40, 60, 90]
+    attempts = len(delays) + 1
+    for attempt in range(1, attempts + 1):
         try:
             r = requests.get(api, params={"url": query_url, "hd": 1},
                              headers={"User-Agent": ua}, timeout=45)
@@ -179,12 +185,15 @@ def _download_via_tikwm(url):
                 return out
             raise RuntimeError("tikwm download produced an empty file.")
         except Exception as e:  # noqa: BLE001
-            wait = attempt * 5
-            print(f"WARNING: tikwm attempt {attempt} failed: {e}"
-                  + (f"; retrying in {wait}s..." if attempt < 3 else "; giving up on tikwm."))
-            if attempt < 3:
-                import time
+            is_rate = "403" in str(e) or "429" in str(e)
+            more = attempt <= len(delays)
+            note = " (looks like tikwm rate-limiting; waiting it out)" if is_rate else ""
+            if more:
+                wait = delays[attempt - 1]
+                print(f"WARNING: tikwm attempt {attempt}/{attempts} failed: {e}{note}; retrying in {wait}s...")
                 time.sleep(wait)
+            else:
+                print(f"FAIL: tikwm unavailable after {attempts} attempts: {e}{note}")
     return None
 
 
