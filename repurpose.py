@@ -134,9 +134,23 @@ def _download_via_tikwm(url):
     api = "https://www.tikwm.com/api/"
     ua = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
           "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
+
+    # Short links (v.douyin.com/xxx, vt.tiktok.com/xxx) — especially Douyin ones —
+    # often fail tikwm's URL parser as-is. Follow the redirect to the canonical
+    # URL first, which tikwm resolves far more reliably.
+    query_url = url
+    try:
+        rr = requests.get(url, headers={"User-Agent": ua}, allow_redirects=True, timeout=20)
+        if rr.url and rr.url.startswith("http"):
+            query_url = rr.url.split("?")[0] if "douyin.com/video/" in rr.url else rr.url
+            if query_url != url:
+                print(f"Resolved short link -> {query_url}")
+    except Exception as e:  # noqa: BLE001
+        print(f"(could not pre-resolve short link: {e}; using original)")
+
     for attempt in range(1, 4):
         try:
-            r = requests.get(api, params={"url": url, "hd": 1},
+            r = requests.get(api, params={"url": query_url, "hd": 1},
                              headers={"User-Agent": ua}, timeout=45)
             r.raise_for_status()
             payload = r.json()
