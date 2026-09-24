@@ -34,7 +34,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
@@ -42,6 +42,7 @@ from dotenv import load_dotenv
 from msal import ConfidentialClientApplication
 
 from video_transcode import ensure_h264
+from onedrive_store import read_json, write_json
 
 load_dotenv()
 
@@ -85,6 +86,14 @@ ONEDRIVE_USER_EMAIL = os.getenv("ONEDRIVE_USER_EMAIL") or "info@rebornaesthetics
 # dispatch workflows (DISPATCH_PAT); the default GITHUB_TOKEN cannot.
 DISPATCH_PAT = os.getenv("DISPATCH_PAT") or os.getenv("GH_DISPATCH_TOKEN")
 GITHUB_REPOSITORY = os.getenv("GITHUB_REPOSITORY") or "Ireneshumm/AI-social-media"
+
+# Auto-retry queue: when an AUTO repost fails (e.g. tikwm rate-limited), the link
+# is saved here and retried automatically by retry_reposts.py on a schedule — so
+# a failed link is never lost and you never have to re-paste it. Entries drop out
+# after MAX attempts or once older than MAX_AGE hours.
+RETRY_QUEUE_FILE = "repost_retry_queue.json"
+RETRY_MAX_ATTEMPTS = int(os.getenv("RETRY_MAX_ATTEMPTS") or "8")
+RETRY_MAX_AGE_HOURS = int(os.getenv("RETRY_MAX_AGE_HOURS") or "24")
 
 # "review": download + optional edits -> drafts, approve before publishing.
 # "auto":   download raw, no edits    -> posts, auto-published on the next run.
@@ -664,38 +673,105 @@ def trigger_immediate_publish():
 
 
 # =========================
+# Auto-repost core + retry queue
+# =========================
+def process_auto_repost(video_url):
+    """Download a repost URL and queue it to BOTH the feed and Stories, then fire
+    an immediate publish. Raises on any failure. Shared by the one-tap dispatch
+    (main) and the scheduled retry runner (retry_reposts.py)."""
+    print(f"Repurposing (auto): {video_url}")
+    print("Step 1: Downloading source (no watermark)...")
+    path = download_video(video_url)
+
+    print("\nStep 3: Normalizing to 1080x1920 H.264...")
+    final_path = ensure_h264(path)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = os.path.splitext(os.path.basename(path))[0]
+    filename = f"repost_{base}_{timestamp}.mp4"
+    token = get_access_token()
+    folder_id = ensure_target_folder(token, ONEDRIVE_POSTS_FOLDER_NAME)
+    print(f"\nStep 4: Uploading to '{ONEDRIVE_POSTS_FOLDER_NAME}'...")
+    upload_video(token, folder_id, ONEDRIVE_POSTS_FOLDER_NAME, filename, final_path)
+
+    try:
+        story_name = f"reborn_story_{base}_{timestamp}.mp4"
+        story_folder_id = ensure_target_folder(token, ONEDRIVE_STORIES_FOLDER_NAME)
+        upload_video(token, story_folder_id, ONEDRIVE_STORIES_FOLDER_NAME, story_name, final_path)
+        print(f"Also queued as Story: {ONEDRIVE_STORIES_FOLDER_NAME}/{story_name}")
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING: could not queue the Story copy: {e}")
+
+    print("\nStep 5: Triggering immediate publish to feed + Stories...")
+    trigger_immediate_publish()
+    print(f"Done. '{ONEDRIVE_POSTS_FOLDER_NAME}/{filename}' queued to feed + Stories.")
+
+
+def enqueue_failed_repost(video_url, reason=""):
+    """Save a failed AUTO repost link so retry_reposts.py can try it again later —
+    so a link is never lost and you never have to re-paste it. Best-effort."""
+    try:
+        token = get_access_token()
+        queue = read_json(token, RETRY_QUEUE_FILE, []) or []
+        clean = extract_url(video_url)
+        for item in queue:
+            if item.get("url") == video_url or item.get("clean_url") == clean:
+                print("Link already in the retry queue; leaving it to auto-retry.")
+                return
+        queue.append({
+            "url": video_url,
+            "clean_url": clean,
+            "added_at": datetime.now(timezone.utc).isoformat(),
+            "attempts": 0,
+            "last_error": (reason or "")[:200],
+        })
+        if write_json(token, RETRY_QUEUE_FILE, queue):
+            print(f"Saved to retry queue ({len(queue)} pending); it will auto-retry on the schedule.")
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING: could not save to retry queue: {e}")
+
+
+# =========================
 # Main
 # =========================
 def main():
+    auto = REPURPOSE_MODE == "auto"
+
+    # AUTO mode: use the shared path and, on failure, save the link to the retry
+    # queue so it is auto-retried later (never lost, never needs re-pasting).
+    if auto:
+        try:
+            validate_env()
+            process_auto_repost(VIDEO_URL)
+            sys.exit(0)
+        except Exception as e:  # noqa: BLE001
+            print("\nERROR:", str(e))
+            print("Saving this link to the retry queue for automatic retry "
+                  "(likely tikwm rate-limiting or a transient hiccup).")
+            enqueue_failed_repost(VIDEO_URL, str(e))
+            sys.exit(1)
+
+    # REVIEW mode: download + optional edits -> drafts for approval.
     try:
         validate_env()
-        auto = REPURPOSE_MODE == "auto"
-        target_folder = ONEDRIVE_POSTS_FOLDER_NAME if auto else REVIEW_FOLDER_NAME
-
+        target_folder = REVIEW_FOLDER_NAME
         print(f"Repurposing: {VIDEO_URL}")
-        if auto:
-            print(f"Mode: AUTO-PUBLISH — raw download straight into '{target_folder}' "
-                  "(no edits; auto-published on the next scheduled run).\n")
-        else:
-            print(f"Mode: REVIEW — edited copy into '{target_folder}' for approval.")
-            print(f"Toggles -> subtitles:{REMOVE_SUBTITLES} (method:{SUBTITLE_METHOD} "
-                  f"band:{SUBTITLE_BAND})  remove_music:{REMOVE_MUSIC}  mute:{MUTE_AUDIO}\n")
+        print(f"Mode: REVIEW — edited copy into '{target_folder}' for approval.")
+        print(f"Toggles -> subtitles:{REMOVE_SUBTITLES} (method:{SUBTITLE_METHOD} "
+              f"band:{SUBTITLE_BAND})  remove_music:{REMOVE_MUSIC}  mute:{MUTE_AUDIO}\n")
 
         print("Step 1: Downloading source (no watermark)...")
         path = download_video(VIDEO_URL)
 
-        # Auto-publish mode intentionally makes NO changes to the content.
-        if not auto:
-            if REMOVE_SUBTITLES:
-                print("\nStep 2a: Removing subtitles (Replicate GPU inpainting)...")
-                path = remove_subtitles(path)
-
-            if MUTE_AUDIO:
-                print("\nStep 2b: Muting all audio...")
-                path = mute_audio(path)
-            elif REMOVE_MUSIC:
-                print("\nStep 2b: Removing background music (keeping voice)...")
-                path = remove_background_music(path)
+        if REMOVE_SUBTITLES:
+            print("\nStep 2a: Removing subtitles (Replicate GPU inpainting)...")
+            path = remove_subtitles(path)
+        if MUTE_AUDIO:
+            print("\nStep 2b: Muting all audio...")
+            path = mute_audio(path)
+        elif REMOVE_MUSIC:
+            print("\nStep 2b: Removing background music (keeping voice)...")
+            path = remove_background_music(path)
 
         print("\nStep 3: Normalizing to 1080x1920 H.264...")
         final_path = ensure_h264(path)
@@ -708,35 +784,17 @@ def main():
         folder_id = ensure_target_folder(token, target_folder)
         upload_video(token, folder_id, target_folder, filename, final_path)
 
-        if auto:
-            # Also queue the SAME clip as a Story so this new video goes out to
-            # BOTH the feed and Stories. The "_story_" marker + vertical shape make
-            # it Story-eligible; a plain name (no repost_/reel_/ai_ prefix) keeps it
-            # out of the feed-video/AI filters.
-            try:
-                story_name = f"reborn_story_{base}_{timestamp}.mp4"
-                story_folder_id = ensure_target_folder(token, ONEDRIVE_STORIES_FOLDER_NAME)
-                upload_video(token, story_folder_id, ONEDRIVE_STORIES_FOLDER_NAME, story_name, final_path)
-                print(f"Also queued as Story: {ONEDRIVE_STORIES_FOLDER_NAME}/{story_name}")
-            except Exception as e:  # noqa: BLE001
-                print(f"WARNING: could not queue the Story copy: {e}")
-
-            print("\nStep 5: Triggering immediate publish to feed + Stories...")
-            trigger_immediate_publish()
-            print(f"\nDone. '{target_folder}/{filename}' queued to the feed and Stories; "
-                  "immediate publish triggered (falls back to the next scheduled run if the trigger is unavailable).")
-        else:
-            print(f"\nDone. Review '{target_folder}/{filename}', then move it into "
-                  f"the '{ONEDRIVE_POSTS_FOLDER_NAME}' folder to publish.")
+        print(f"\nDone. Review '{target_folder}/{filename}', then move it into "
+              f"the '{ONEDRIVE_POSTS_FOLDER_NAME}' folder to publish.")
         sys.exit(0)
 
     except subprocess.CalledProcessError as e:
         print("\nERROR: a processing step failed:", e)
-        print("If it was the download, the most likely cause is an EXPIRED TikTok login:")
+        print("If it was the download, the most likely cause is an EXPIRED login:")
         print("  → Refresh the YTDLP_COOKIES secret with a fresh cookies.txt exported")
-        print("    from a browser logged in to TikTok. ('Video not available / status")
-        print("    code 0' with cookies present usually means the saved login expired,")
-        print("    or TikTok is rate-limiting this datacenter IP — not that the video is gone.)")
+        print("    from a browser logged in to TikTok / Douyin. ('status code 0' or")
+        print("    'Fresh cookies needed' with cookies present usually means the saved")
+        print("    login expired, or the site is rate-limiting this datacenter IP.)")
         print("  Other possibilities: the link is genuinely private/region-locked/deleted.")
         sys.exit(1)
     except Exception as e:
