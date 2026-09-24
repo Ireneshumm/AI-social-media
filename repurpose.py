@@ -115,6 +115,53 @@ def extract_url(text):
     return match.group(0) if match else text.strip()
 
 
+def _download_via_tikwm(url):
+    """Download a TikTok/Douyin video (no watermark) through the free tikwm API.
+
+    This is the SAME method the phone shortcut uses successfully. tikwm fetches
+    the clip server-side and hands back a plain no-watermark MP4 URL, so it works
+    from GitHub runners too — unlike yt-dlp's TikTok flow, which TikTok blocks
+    from datacenter IPs ("Unexpected response" / "status code 0"). Returns the
+    downloaded path, or None so the caller can fall back to yt-dlp."""
+    api = "https://www.tikwm.com/api/"
+    ua = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+          "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
+    for attempt in range(1, 4):
+        try:
+            r = requests.get(api, params={"url": url, "hd": 1},
+                             headers={"User-Agent": ua}, timeout=45)
+            r.raise_for_status()
+            payload = r.json()
+            if payload.get("code") != 0 or not payload.get("data"):
+                raise RuntimeError(f"tikwm error: {payload.get('msg') or payload}")
+            data = payload["data"]
+            media = data.get("hdplay") or data.get("play") or data.get("wmplay")
+            if not media:
+                raise RuntimeError("tikwm returned no downloadable video URL.")
+            if media.startswith("/"):
+                media = "https://www.tikwm.com" + media
+            vid_id = str(data.get("id") or "tikwm")
+            out = f"dl/{vid_id}.mp4"
+            with requests.get(media, headers={"User-Agent": ua}, timeout=120, stream=True) as vr:
+                vr.raise_for_status()
+                with open(out, "wb") as f:
+                    for chunk in vr.iter_content(chunk_size=1 << 16):
+                        if chunk:
+                            f.write(chunk)
+            if os.path.getsize(out) > 0:
+                print(f"Downloaded via tikwm: {out} ({os.path.getsize(out)} bytes)")
+                return out
+            raise RuntimeError("tikwm download produced an empty file.")
+        except Exception as e:  # noqa: BLE001
+            wait = attempt * 5
+            print(f"WARNING: tikwm attempt {attempt} failed: {e}"
+                  + (f"; retrying in {wait}s..." if attempt < 3 else "; giving up on tikwm."))
+            if attempt < 3:
+                import time
+                time.sleep(wait)
+    return None
+
+
 def download_video(url):
     url = extract_url(url)
     os.makedirs("dl", exist_ok=True)
@@ -123,6 +170,14 @@ def download_video(url):
             os.remove(old)
         except OSError:
             pass
+
+    # TikTok/Douyin: try tikwm first (works from datacenter IPs), then fall back
+    # to yt-dlp. This is what makes the one-tap server-side repost reliable.
+    if any(s in url.lower() for s in ("tiktok", "douyin")):
+        via_tikwm = _download_via_tikwm(url)
+        if via_tikwm:
+            return via_tikwm
+        print("tikwm unavailable; falling back to yt-dlp...")
 
     template = "dl/%(id)s.%(ext)s"
     cmd = [
