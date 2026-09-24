@@ -133,7 +133,7 @@ jobs:
           ANTHROPIC_MODEL: ${{ secrets.ANTHROPIC_MODEL }}
           IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
           FEED_PATTERN: ${{ secrets.FEED_PATTERN }}
-          PREFERRED_KIND: ${{ inputs.preferred_kind }}
+          PREFERRED_KIND: ${{ inputs.preferred_kind || 'video' }}
           META_APP_ID: ${{ secrets.META_APP_ID }}
           META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
@@ -206,7 +206,14 @@ jobs:
           ANTHROPIC_MODEL: ${{ secrets.ANTHROPIC_MODEL }}
           IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
           FEED_PATTERN: ${{ secrets.FEED_PATTERN }}
-          PREFERRED_KIND: ${{ inputs.preferred_kind }}
+          # Video-first: when no kind is forced (e.g. scheduled posts) default to
+          # video, so the feed is video-led and the whole back-catalogue of reels
+          # is recycled through in rotation. Pick "photo" manually to override.
+          PREFERRED_KIND: ${{ inputs.preferred_kind || 'video' }}
+          # Keep recycling from the FULL video archive (least-recently-shown first)
+          # so at least ~50 distinct videos air before any repeat, instead of
+          # collapsing to only the top performers once the library grows past 50.
+          REPEAT_TOP_ONLY_ABOVE: "500"
           META_APP_ID: ${{ secrets.META_APP_ID }}
           META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
