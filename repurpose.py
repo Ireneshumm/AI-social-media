@@ -76,7 +76,15 @@ REVIEW_FOLDER_NAME = (
     or "drafts"
 )
 ONEDRIVE_POSTS_FOLDER_NAME = os.getenv("ONEDRIVE_POSTS_FOLDER_NAME") or "posts"
+ONEDRIVE_STORIES_FOLDER_NAME = os.getenv("ONEDRIVE_STORIES_FOLDER_NAME") or "stories"
 ONEDRIVE_USER_EMAIL = os.getenv("ONEDRIVE_USER_EMAIL") or "info@rebornaesthetics.com.au"
+
+# When a new video is repurposed in AUTO mode, immediately fire the feed and
+# story publishers (instead of waiting for the next scheduled run) so the newest
+# clip goes out to BOTH the feed and Stories right away. Needs a token that can
+# dispatch workflows (DISPATCH_PAT); the default GITHUB_TOKEN cannot.
+DISPATCH_PAT = os.getenv("DISPATCH_PAT") or os.getenv("GH_DISPATCH_TOKEN")
+GITHUB_REPOSITORY = os.getenv("GITHUB_REPOSITORY") or "Ireneshumm/AI-social-media"
 
 # "review": download + optional edits -> drafts, approve before publishing.
 # "auto":   download raw, no edits    -> posts, auto-published on the next run.
@@ -593,6 +601,41 @@ def upload_video(token, folder_id, folder_name, filename, path):
     print(f"Uploaded to {folder_name}/{filename} ({size} bytes)")
 
 
+def trigger_immediate_publish():
+    """Fire the feed and story publishers right now so the just-added clip goes
+    out to BOTH the feed and Stories immediately (video-first / newest-first
+    selection then picks this new clip). Best-effort: any failure just means the
+    clip goes out on the next scheduled run instead."""
+    if not DISPATCH_PAT:
+        print("No DISPATCH_PAT set — skipping immediate publish; the clip will go "
+              "out on the next scheduled run. (Add a DISPATCH_PAT secret to enable "
+              "instant feed+story publishing.)")
+        return
+
+    headers = {
+        "Authorization": f"Bearer {DISPATCH_PAT}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    targets = [
+        ("post-publisher.yml", {"publisher_type": "post", "preferred_kind": "video"}),
+        ("story-publisher.yml", {}),
+    ]
+    for workflow, inputs in targets:
+        url = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/actions/workflows/{workflow}/dispatches"
+        body = {"ref": "main"}
+        if inputs:
+            body["inputs"] = inputs
+        try:
+            resp = requests.post(url, headers=headers, json=body, timeout=30)
+            if resp.status_code in (201, 204):
+                print(f"Triggered immediate publish: {workflow}")
+            else:
+                print(f"WARNING: could not trigger {workflow}: HTTP {resp.status_code} {resp.text[:200]}")
+        except Exception as e:  # noqa: BLE001
+            print(f"WARNING: could not trigger {workflow}: {e}")
+
+
 # =========================
 # Main
 # =========================
@@ -639,7 +682,22 @@ def main():
         upload_video(token, folder_id, target_folder, filename, final_path)
 
         if auto:
-            print(f"\nDone. '{target_folder}/{filename}' will be auto-published on the next scheduled run.")
+            # Also queue the SAME clip as a Story so this new video goes out to
+            # BOTH the feed and Stories. The "_story_" marker + vertical shape make
+            # it Story-eligible; a plain name (no repost_/reel_/ai_ prefix) keeps it
+            # out of the feed-video/AI filters.
+            try:
+                story_name = f"reborn_story_{base}_{timestamp}.mp4"
+                story_folder_id = ensure_target_folder(token, ONEDRIVE_STORIES_FOLDER_NAME)
+                upload_video(token, story_folder_id, ONEDRIVE_STORIES_FOLDER_NAME, story_name, final_path)
+                print(f"Also queued as Story: {ONEDRIVE_STORIES_FOLDER_NAME}/{story_name}")
+            except Exception as e:  # noqa: BLE001
+                print(f"WARNING: could not queue the Story copy: {e}")
+
+            print("\nStep 5: Triggering immediate publish to feed + Stories...")
+            trigger_immediate_publish()
+            print(f"\nDone. '{target_folder}/{filename}' queued to the feed and Stories; "
+                  "immediate publish triggered (falls back to the next scheduled run if the trigger is unavailable).")
         else:
             print(f"\nDone. Review '{target_folder}/{filename}', then move it into "
                   f"the '{ONEDRIVE_POSTS_FOLDER_NAME}' folder to publish.")

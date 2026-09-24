@@ -108,6 +108,10 @@ jobs:
           REMOVE_MUSIC: ${{ inputs.remove_music }}
           MUTE_AUDIO: ${{ inputs.mute_audio }}
           ONEDRIVE_POSTS_FOLDER_NAME: ${{ secrets.ONEDRIVE_POSTS_FOLDER_NAME }}
+          ONEDRIVE_STORIES_FOLDER_NAME: ${{ secrets.ONEDRIVE_STORIES_FOLDER_NAME }}
+          # Token that can dispatch workflows, so a new auto/直发 clip is published
+          # to the feed + Stories immediately instead of waiting for the schedule.
+          DISPATCH_PAT: ${{ secrets.DISPATCH_PAT }}
           REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
           MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
