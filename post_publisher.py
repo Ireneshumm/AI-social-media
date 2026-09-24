@@ -14,6 +14,7 @@ from asset_helpers import (
     get_media_kind,
     filename_to_brief,
     is_story_media,
+    is_ai_generated,
     recent_content_groups,
     pick_with_variety,
     content_group,
@@ -1061,6 +1062,15 @@ def main():
 
         print("Step 3: Finding feed-shaped post assets...")
         matched = match_post_assets(items)
+
+        # AI-generated images (ai_*) are no longer used — the brand posts real
+        # photos and (later) AI *videos* instead. Drop them so they are never
+        # published. AI videos use the reel_/repost_ naming, not ai_, so they are
+        # unaffected; the weekly cleanup removes ai_* files from the archive.
+        ai_dropped = [m for m in matched if is_ai_generated(m["media"]["name"])]
+        if ai_dropped:
+            print(f"Skipping {len(ai_dropped)} AI-generated image(s) (ai_*) — no longer used.")
+        matched = [m for m in matched if not is_ai_generated(m["media"]["name"])]
 
         if not matched:
             print("No valid feed post assets found. Exit gracefully.")
