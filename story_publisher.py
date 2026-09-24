@@ -16,6 +16,7 @@ from asset_helpers import (
     get_media_kind,
     filename_to_brief,
     is_story_media,
+    is_ai_generated,
     recent_content_groups,
     pick_with_variety,
     content_group,
@@ -929,6 +930,16 @@ def main():
             recycle = recyclable_stories(posted_children)
         except Exception as e:
             print(f"Variety/recycle history unavailable ({e}); selecting at random.")
+
+        # AI-generated images (ai_*) are no longer used — drop them from both the
+        # fresh queue and the recycle pool so no AI image is ever posted to Stories.
+        # (Real filmed clips + photos remain; the weekly cleanup deletes ai_* files.)
+        ai_dropped = ([m for m in matched if is_ai_generated(m["media"]["name"])]
+                      + [m for m in recycle if is_ai_generated(m["media"]["name"])])
+        if ai_dropped:
+            print(f"Skipping {len(ai_dropped)} AI-generated story image(s) (ai_*) — no longer used.")
+        matched = [m for m in matched if not is_ai_generated(m["media"]["name"])]
+        recycle = [m for m in recycle if not is_ai_generated(m["media"]["name"])]
 
         if not matched and not recycle:
             print("No story assets available (queue or archive). Exit gracefully.")
