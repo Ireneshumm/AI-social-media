@@ -31,12 +31,9 @@ def _age_hours(iso):
 
 
 def main():
-    try:
-        R.validate_env()
-    except Exception as e:  # noqa: BLE001
-        print(f"Env not ready: {e}")
-        sys.exit(1)
-
+    # NOTE: we do NOT call R.validate_env() here — it requires VIDEO_URL, which a
+    # scheduled retry run intentionally has none of. get_access_token() fails
+    # clearly if the Microsoft credentials are actually missing.
     token = R.get_access_token()
     queue = read_json(token, R.RETRY_QUEUE_FILE, []) or []
     if not queue:
