@@ -8,8 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       video_url:
-        description: "TikTok or Instagram video URL (your own / rights-cleared content)"
-        required: true
+        description: "TikTok/Douyin/Instagram URL. Leave BLANK to just retry the queued failed reposts."
+        required: false
+        default: ""
         type: string
       mode:
         description: "review = edit then wait in drafts for approval; auto = no edits, straight to posts and auto-published"
