@@ -105,18 +105,34 @@ def is_story_media(item):
     return "_story_" in name
 
 
+# Ordered topic rules for the feed rotation: (topic, [keywords]). FIRST match
+# wins, so more specific rules come first — e.g. "eyebrow removal" is tattoo work,
+# so it must be checked before the "brow/eyebrow" -> lashes rule.
+_TOPIC_RULES = [
+    ("tattoo",  ["tattoo", "eyebrow removal", "brow removal", "洗眉", "纹身"]),
+    ("nails",   ["nail", "manicure", "美甲"]),
+    ("lashes",  ["lash", "eyelash", "brow", "eyebrow", "睫", "眉"]),
+    ("massage", ["massage", "lymphatic", "按摩", "spa"]),
+    ("skin",    ["facial", "hydrafacial", "pigment", "picoway", "laser", "skin",
+                 "needling", "wrinckle", "wrinkle", "hifu", "volumization", "acne",
+                 "rejuven", "美容", "护肤", "祛斑", "美白"]),
+]
+
+
 def content_group(filename):
-    """A coarse 'kind of content' key used to avoid posting similar items back
-    to back. For generated files (ai_<topic>_...) it is the topic; otherwise the
-    first word of the name."""
-    stem = Path(filename).stem.lower()
-    parts = [p for p in re.split(r"[-_]+", stem) if p]
-    if not parts:
-        return stem
-    # Skip a leading generator/routing prefix so the topic word drives variety.
-    if parts[0] in ("ai", "reel") and len(parts) >= 2:
-        return parts[1]
-    return parts[0]
+    """Coarse TOPIC key used to rotate the feed through different subjects so the
+    same kind of content is not posted back-to-back (tattoo -> skin -> nails ->
+    lashes -> massage -> ...). Matched from service keywords in the file name.
+
+    A file with no recognizable topic word — a plain filmed clip
+    (20260722_iOS.mp4) or a repost (repost_<id>.mp4) — is 'general'. To slot a
+    VIDEO into the topic rotation, name it with a topic word, e.g.
+    reel_tattoo_..., reel_facial_..., reel_nail_..., reel_lash_..., reel_massage_..."""
+    name = Path(filename).name.lower()
+    for topic, keywords in _TOPIC_RULES:
+        if any(k in name for k in keywords):
+            return topic
+    return "general"
 
 
 def recent_content_groups(items, n=2):

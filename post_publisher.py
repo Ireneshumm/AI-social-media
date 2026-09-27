@@ -1085,7 +1085,12 @@ def main():
         try:
             posted_sub = get_subfolder_by_path(token, ONEDRIVE_POSTED_FOLDER_NAME, ONEDRIVE_POSTS_FOLDER_NAME)
             posted_children = get_folder_children(token, posted_sub["id"])
-            recent_groups = recent_content_groups(posted_children, n=2)
+            # Rotate the feed through different TOPICS: steer away from the topics
+            # of the last N posts so the same subject doesn't repeat within ~10
+            # posts (tattoo -> skin -> nails -> lashes -> massage -> ...). Assets
+            # with no recognizable topic (plain videos/reposts) are "general".
+            FEED_TOPIC_WINDOW = int(os.getenv("FEED_TOPIC_WINDOW") or "10")
+            recent_groups = recent_content_groups(posted_children, n=FEED_TOPIC_WINDOW)
             posted_count = sum(
                 1 for it in posted_children
                 if "folder" not in it and is_supported_media_file(it.get("name", ""))
