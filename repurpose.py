@@ -676,9 +676,14 @@ def trigger_immediate_publish():
 # Auto-repost core + retry queue
 # =========================
 def process_auto_repost(video_url):
-    """Download a repost URL and queue it to BOTH the feed and Stories, then fire
-    an immediate publish. Raises on any failure. Shared by the one-tap dispatch
-    (main) and the scheduled retry runner (retry_reposts.py)."""
+    """Download a repost URL and queue it to BOTH the feed and Stories. Raises on
+    any failure. Shared by the one-tap dispatch (main) and the scheduled retry
+    runner (retry_reposts.py).
+
+    The clip is NOT published immediately: it joins the normal topic-rotated
+    schedule and airs in its turn, so consecutive posts stay on different topics
+    and the queue order is preserved (new content is slotted behind the existing
+    rotation, not jumped to the front)."""
     print(f"Repurposing (auto): {video_url}")
     print("Step 1: Downloading source (no watermark)...")
     path = download_video(video_url)
@@ -702,9 +707,10 @@ def process_auto_repost(video_url):
     except Exception as e:  # noqa: BLE001
         print(f"WARNING: could not queue the Story copy: {e}")
 
-    print("\nStep 5: Triggering immediate publish to feed + Stories...")
-    trigger_immediate_publish()
-    print(f"Done. '{ONEDRIVE_POSTS_FOLDER_NAME}/{filename}' queued to feed + Stories.")
+    # No immediate publish: the clip waits in the queue and airs on the next
+    # scheduled run, in its place in the topic rotation (not jumped to the front).
+    print(f"Done. '{ONEDRIVE_POSTS_FOLDER_NAME}/{filename}' queued to feed + Stories; "
+          "it will air on the next scheduled run in topic-rotation order.")
 
 
 def enqueue_failed_repost(video_url, reason=""):
