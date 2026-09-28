@@ -1152,44 +1152,50 @@ def main():
 
         pool = matched
         recycling = False
-        if want_kind:
-            same_kind = [m for m in matched if m["kind"] == want_kind]
-            if same_kind:
-                pool = same_kind
-            elif want_kind == "video" and recycle:
-                pool = recycle
-                recycling = True
-                print(f"No fresh video in queue; recycling from {len(recycle)} previously-posted video(s).")
-            else:
-                print(f"No {want_kind} asset available (queue or archive); falling back to any kind.")
+        first = None
 
-        if recycling:
-            # Round-robin: repost the video that has gone longest without airing
-            # (skip the last couple of topics for variety), so the whole library
-            # cycles through before any video repeats.
-            eligible = [m for m in pool if content_group(m["media"]["name"]) not in recent_groups]
-            ranked = eligible or pool
-            # On a boost slot, prefer the least-recently-shown TOP performer so
-            # strong videos get extra airings; otherwise take the plain oldest.
-            top_ranked = [m for m in ranked if m["media"]["name"] in top_assets] if boost_now else []
-            if top_ranked:
-                first = top_ranked[0]
-                print(f"Boost slot {cycle_pos}: reposting top performer {first['media']['name']}.")
-            else:
-                first = ranked[0]
-        else:
-            # Prefer the NEWEST fresh upload so a just-added reel goes out first;
-            # fall back to the variety pick if timestamps are unavailable.
-            fresh_newest = sorted(
-                pool,
+        # Video is one unified rotation: the fresh queue + the recycled archive,
+        # ordered by (1) TOPIC rotation — skip any topic used in the last N posts —
+        # then (2) least-recently-shown/added. A newly-added clip is NOT jumped to
+        # the front: its lastModified is recent, so it sits near the BACK and only
+        # airs once its topic slot comes up. That keeps the feed cycling through
+        # different topics instead of re-posting whatever was just added.
+        video_candidates = ([m for m in matched if m["kind"] == "video"] + recycle) \
+            if want_kind == "video" else []
+
+        if want_kind == "video" and video_candidates:
+            eligible = [m for m in video_candidates
+                        if content_group(m["media"]["name"]) not in recent_groups]
+            ranked = sorted(
+                eligible or video_candidates,
                 key=lambda m: (m["media"].get("lastModifiedDateTime") or ""),
-                reverse=True,
             )
-            first = fresh_newest[0] if fresh_newest else pick_with_variety(pool, recent_groups, random)
-        tag = " (recycled repost)" if first.get("recycled") else ""
+            top_ranked = [m for m in ranked if m["media"]["name"] in top_assets] if boost_now else []
+            first = top_ranked[0] if top_ranked else ranked[0]
+            if top_ranked:
+                print(f"Boost slot {cycle_pos}: airing top performer {first['media']['name']}.")
+            recycling = bool(first.get("recycled"))
+            pool = video_candidates
+        else:
+            # Non-video kinds (or no video available anywhere): keep the existing
+            # same-kind / variety selection.
+            if want_kind:
+                same_kind = [m for m in matched if m["kind"] == want_kind]
+                if same_kind:
+                    pool = same_kind
+                elif want_kind == "video" and recycle:
+                    pool = recycle
+                    recycling = True
+                    print(f"No fresh video in queue; recycling from {len(recycle)} previously-posted video(s).")
+                else:
+                    print(f"No {want_kind} asset available (queue or archive); falling back to any kind.")
+            first = pick_with_variety(pool, recent_groups, random)
+
+        tag = " (recycled repost)" if first.get("recycled") else " (fresh)"
         print(
-            f"{len(matched)} queued + {len(recycle)} recyclable video(s); "
-            f"avoided recent {sorted(recent_groups) or 'none'}; selected {first['media']['name']}{tag}."
+            f"{len([m for m in matched if m['kind'] == 'video'])} fresh + {len(recycle)} "
+            f"recyclable video(s); avoided topics {sorted(recent_groups) or 'none'}; "
+            f"selected {first['media']['name']}{tag} [topic: {content_group(first['media']['name'])}]."
         )
 
         # Try the variety pick, then fall back to other assets — including recycled
