@@ -50,4 +50,38 @@ jobs:
           assert result.startswith('Brisbane appointment options.\n\n') and footer in result
           assert result.endswith('#annerley #fortitudevalley')
           print('All Python files compile. Booking footer, fallback variants and isolated caption composition passed. No publisher or external service called.')
+          import os, re, sys
+          from types import SimpleNamespace
+          class FakeHTTPError(Exception):
+              def __init__(self, status):
+                  self.response = SimpleNamespace(status_code=status)
+                  super().__init__(f'HTTP {status}')
+          retry_nodes = [n for n in trees['retry_failed.py'].body if isinstance(n, ast.FunctionDef) and n.name in ('find_named_folder', 'retry_count', 'bump_name', 'mark_dead', 'main')]
+          def exercise_retry(name, failure=None):
+              moves, alerts, logs = [], [], []
+              folders = {'project': [{'id': 'queue', 'name': 'posts', 'folder': {}}, {'id': 'failed', 'name': 'failed', 'folder': {}}], 'failed': [{'id': 'failed-posts', 'name': 'posts', 'folder': {}}], 'failed-posts': [] if name is None else [{'id': 'media', 'name': name}]}
+              def fake_move(token, item_id, target_id, new_name):
+                  moves.append((item_id, target_id, new_name))
+                  if failure is not None:
+                      raise failure
+                  return {'id': item_id, 'name': new_name}
+              ns = {'os': os, 're': re, 'sys': sys, 'requests': SimpleNamespace(HTTPError=FakeHTTPError), 'MAX_RETRIES': 3, 'DEAD_MARKER': '__dead', 'ONEDRIVE_POSTS_FOLDER_NAME': 'posts', 'ONEDRIVE_STORIES_FOLDER_NAME': 'stories', 'ONEDRIVE_FAILED_FOLDER_NAME': 'failed', 'validate_env': lambda: None, 'get_access_token': lambda: 'fake', 'get_project_folder': lambda token: {'id': 'project'}, 'get_children': lambda token, folder_id: folders.get(folder_id, []), 'is_supported_media_file': lambda name: True, 'move_item': fake_move, 'send_alert_safely': lambda *args: alerts.append(args), 'print': lambda *args: logs.append(' '.join(map(str, args)))}
+              exec(compile(ast.Module(body=retry_nodes, type_ignores=[]), '<isolated retry>', 'exec'), ns)
+              try:
+                  ns['main']()
+              except SystemExit as result:
+                  return result.code, moves, alerts, logs
+              raise AssertionError('Retry must report an exit status')
+          status, moves, alerts, logs = exercise_retry('Skin needling.jpg')
+          assert status == 0 and moves == [('media', 'queue', 'Skin needling__try1.jpg')] and not alerts, 'Successful move must pass without alert'
+          status, moves, alerts, logs = exercise_retry(None)
+          assert status == 0 and not moves and not alerts, 'Empty queue must pass'
+          for failure in (FakeHTTPError(409), RuntimeError('Temporary move failure')):
+              status, moves, alerts, logs = exercise_retry('Skin needling.jpg', failure)
+              assert status == 1 and len(moves) == 1 and not alerts, 'Unresolved move must fail without duplicate rename, overwrite or extra email'
+          status, moves, alerts, logs = exercise_retry('Skin needling__try3.jpg', RuntimeError('Retirement move failure'))
+          assert status == 1 and len(moves) == 1 and not alerts, 'Failed retirement must not report success'
+          status, moves, alerts, logs = exercise_retry('Skin needling__try3.jpg')
+          assert status == 0 and moves == [('media', 'failed-posts', 'Skin needling__try3__dead.jpg')] and len(alerts) == 1, 'Successful retirement keeps existing single alert behavior'
+          print('Six isolated retry scenarios passed; no network, real files moved or emails sent.')
           PY
