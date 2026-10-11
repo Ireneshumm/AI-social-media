@@ -168,6 +168,7 @@ def main():
         failed_children = get_children(token, failed_folder["id"])
 
         requeued = 0
+        unresolved = 0
         newly_dead = []
         # Failed items live under failed/posts and failed/stories; both go back to
         # the single "posts" queue, where aspect-ratio routing re-sorts them.
@@ -196,6 +197,7 @@ def main():
                         newly_dead.append(name)
                         print(f"RETIRED (failed {count}x): failed/{sub_name}/{name} -> {dead_name}")
                     except Exception as e:
+                        unresolved += 1
                         print(f"WARNING: could not retire {name}: {e}")
                     continue
 
@@ -205,9 +207,12 @@ def main():
                     requeued += 1
                     print(f"REQUEUED (attempt {count + 1}): failed/{sub_name}/{name} -> {ONEDRIVE_POSTS_FOLDER_NAME}/{new_name}")
                 except Exception as e:
+                    unresolved += 1
                     print(f"WARNING: could not requeue {name}: {e}")
+                    if isinstance(e, requests.HTTPError) and e.response is not None and e.response.status_code == 409:
+                        print("Queue filename conflict: source retained; inspect the existing queued item before retrying. No overwrite or duplicate rename was attempted.")
 
-        print(f"\nRetry sweep complete. Requeued {requeued}; retired {len(newly_dead)}.")
+        print(f"\nRetry sweep complete. Requeued {requeued}; retired {len(newly_dead)}; unresolved {unresolved}.")
 
         # Report only items retired THIS sweep — each broken item is announced
         # exactly once, then never again.
@@ -227,7 +232,8 @@ def main():
                 ]),
             )
 
-        sys.exit(0)
+        # Keep failed moves visible in Actions without sending additional email.
+        sys.exit(1 if unresolved else 0)
 
     except Exception as e:
         print("\nERROR:", str(e))
