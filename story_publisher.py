@@ -440,7 +440,8 @@ def generate_story_caption(brief_text, image_uris=None):
 
 Requirements:
 - Very short (a few words to one line), suitable as Story overlay text.
-- Premium, warm, human tone.
+- Premium, warm, human tone. Use plain text without emoji.
+- Do not invent prices or offers, describe consultations as free or complimentary, or imply every service is available at both clinics.
 - Where natural, give it a local Brisbane feel (Annerley / Fortitude Valley / southside) so nearby locals recognise it as their neighbourhood clinic.
 - No hashtags, no medical claims, no overpromising.
 - A soft call to action only if it feels natural.
