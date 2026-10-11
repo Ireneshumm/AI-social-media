@@ -26,6 +26,24 @@ def blur_pad_filter():
     )
 
 
+
+def story_booking_filter():
+    """Burn a readable booking prompt into the 1080x1920 Story canvas.
+
+    This is visible text, not a clickable link sticker. Keep the panel above
+    the platform's bottom controls and use the repository's existing font.
+    """
+    font = ".fonts/sans_regular.ttf"
+    if not os.path.isfile(font):
+        raise RuntimeError("Story booking font is missing; not publishing an unlabelled video.")
+    style = f"fontfile={font}:fontcolor=0x352C28:x=(w-text_w)/2"
+    return (
+        "drawbox=x=70:y=h-490:w=940:h=220:color=0xF5F0E8@0.96:t=fill,"
+        f"drawtext={style}:fontsize=32:y=h-462:text='REBORN AESTHETICS | BRISBANE',"
+        f"drawtext={style}:fontsize=42:y=h-408:text='Book your appointment online',"
+        f"drawtext={style}:fontsize=42:y=h-349:text='rebornaesthetics.com.au'"
+    )
+
 def has_tool(name):
     return shutil.which(name) is not None
 
@@ -111,7 +129,7 @@ def has_audio_stream(path):
     return "audio" in result.stdout
 
 
-def ensure_h264(input_path):
+def ensure_h264(input_path, *, story_booking_cta=False):
     """Return a path to an Instagram/Facebook-friendly H.264/AAC MP4.
 
     Always re-encodes the video to a clean, uniform 1080x1920 H.264/AAC MP4
@@ -120,9 +138,12 @@ def ensure_h264(input_path):
     reasons - low resolution, odd audio codec, unusual pixel format/profile -
     so a full normalising pass is the reliable option. Falls back to the
     original file if ffmpeg is unavailable or the transcode fails, so
-    publishing is never blocked.
+    publishing is never blocked for regular posts. Story booking mode raises on
+    failure so a video without the requested visible booking prompt is not published.
     """
     if not has_tool("ffmpeg"):
+        if story_booking_cta:
+            raise RuntimeError("ffmpeg is required for the Story booking prompt.")
         print("WARNING: ffmpeg not found; skipping video transcode.")
         return input_path
 
@@ -155,7 +176,10 @@ def ensure_h264(input_path):
     if not audio_present:
         cmd += ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"]
 
-    cmd += ["-filter_complex", f"[0:v]{blur_pad_filter()}[v]", "-map", "[v]"]
+    video_filter = blur_pad_filter()
+    if story_booking_cta:
+        video_filter += "," + story_booking_filter()
+    cmd += ["-filter_complex", f"[0:v]{video_filter}[v]", "-map", "[v]"]
     cmd += ["-map", "1:a:0"] if not audio_present else ["-map", "0:a:0?"]
 
     cmd += [
@@ -174,10 +198,14 @@ def ensure_h264(input_path):
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
     except Exception as e:
+        if story_booking_cta:
+            raise RuntimeError("Story booking video transcode failed.") from e
         print(f"WARNING: ffmpeg transcode raised an error; using original file: {e}")
         return input_path
 
     if result.returncode != 0 or not os.path.exists(output_path):
+        if story_booking_cta:
+            raise RuntimeError(f"Story booking video transcode failed: {result.stderr[-1000:]}")
         print("WARNING: ffmpeg transcode failed; using original file.")
         if result.stderr:
             print(result.stderr[-1000:])
