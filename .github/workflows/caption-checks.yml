@@ -85,3 +85,73 @@ jobs:
           assert status == 0 and moves == [('media', 'failed-posts', 'Skin needling__try3__dead.jpg')] and len(alerts) == 1, 'Successful retirement keeps existing single alert behavior'
           print('Six isolated retry scenarios passed; no network, real files moved or emails sent.')
           PY
+
+  check-story-video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Install FFmpeg for isolated video fixtures
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Render and verify booking prompts without publishing
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import subprocess
+          from pathlib import Path
+          from unittest.mock import patch
+          import video_transcode as video
+          out = Path('story-video-preview')
+          out.mkdir(exist_ok=True)
+          results = []
+          def run(args):
+              return subprocess.run(args, check=True, capture_output=True, text=True, timeout=180)
+          for name, size, audio in [('landscape', '640x360', False), ('portrait', '360x640', True), ('square', '480x480', False)]:
+              source = out / (name + '.mp4')
+              args = ['ffmpeg', '-y', '-f', 'lavfi', '-i', 'color=c=0xAAA092:s=' + size + ':r=30:d=3']
+              if audio:
+                  args += ['-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100:duration=3']
+              args += ['-c:v', 'libx264', '-pix_fmt', 'yuv420p']
+              if audio:
+                  args += ['-c:a', 'aac', '-shortest']
+              run(args + [str(source)])
+              before = hashlib.sha256(source.read_bytes()).hexdigest()
+              encoded = video.ensure_h264(str(source), story_booking_cta=True)
+              assert encoded != str(source), 'Must not silently return the unlabelled original'
+              assert hashlib.sha256(source.read_bytes()).hexdigest() == before, 'Source must remain unchanged'
+              probe = json.loads(run(['ffprobe', '-v', 'error', '-show_streams', '-show_format', '-of', 'json', encoded]).stdout)
+              v = next(s for s in probe['streams'] if s['codec_type'] == 'video')
+              a = next(s for s in probe['streams'] if s['codec_type'] == 'audio')
+              assert (v['codec_name'], v['width'], v['height'], v['pix_fmt']) == ('h264', 1080, 1920, 'yuv420p')
+              assert a['codec_name'] == 'aac' and int(a['sample_rate']) == 44100
+              assert 2.9 <= float(probe['format']['duration']) <= 3.2
+              run(['ffmpeg', '-y', '-ss', '1', '-i', encoded, '-frames:v', '1', str(out / (name + '.png'))])
+              run(['ffmpeg', '-y', '-ss', '1', '-i', encoded, '-frames:v', '1', '-vf', 'scale=390:693', str(out / (name + '-phone.png'))])
+              results.append({'fixture': name, 'source_audio': audio, 'output': encoded, 'video': 'h264 1080x1920', 'audio': 'aac 44100', 'source_preserved': True})
+          with patch.object(video, 'has_tool', return_value=False):
+              assert video.ensure_h264('missing.mp4') == 'missing.mp4'
+              try:
+                  video.ensure_h264('missing.mp4', story_booking_cta=True)
+              except RuntimeError:
+                  pass
+              else:
+                  raise AssertionError('Story mode must fail closed when FFmpeg is missing')
+          with patch.object(video.os.path, 'isfile', return_value=False):
+              try:
+                  video.story_booking_filter()
+              except RuntimeError:
+                  pass
+              else:
+                  raise AssertionError('Missing font must be explicit')
+          (out / 'checks.json').write_text(json.dumps(results, indent=2))
+          print('Three real FFmpeg renders passed; originals preserved, audio present, no posts or appointments created.')
+          PY
+      - uses: actions/upload-artifact@v6
+        with:
+          name: story-booking-preview
+          path: story-video-preview/
+          retention-days: 7
