@@ -195,31 +195,20 @@ def _treatment_from_brief(brief_text):
 # The line is chosen from a hash of the brief, so a given asset always gets the
 # same caption (stable across retries) while different assets vary.
 _FALLBACK_WITH_TREATMENT = (
-    "Experience {t} at Reborn Aesthetics — premium medical aesthetics in Brisbane. "
-    "Book a complimentary consultation today.",
-    "{t} at Reborn Aesthetics, Brisbane. Every treatment plan starts with a complimentary consultation "
-    "so it is matched to your skin.",
-    "Considering {t}? Our Brisbane team will talk through suitability, what to expect and "
-    "aftercare before anything begins.",
-    "{t} at our Annerley and Fortitude Valley clinics. Book a complimentary consultation to discuss "
-    "whether it suits you.",
-    "Thinking about {t}? Book a complimentary consultation in Brisbane and we will assess your skin and "
-    "goals first.",
+    "Explore {t} appointments at Reborn Aesthetics in Brisbane. Check the selected clinic and service details before booking.",
+    "Considering {t}? Speak with our Brisbane team about the correct appointment for your goals.",
+    "View {t} appointment options at Reborn Aesthetics, Brisbane. Availability and suitability need to be confirmed.",
+    "Planning an appointment for {t} in Brisbane? Services vary between our Annerley and Fortitude Valley clinics.",
+    "Find out about {t} at Reborn Aesthetics, Brisbane. Ask the team if you are unsure which service to select.",
 )
 
 _FALLBACK_GENERIC = (
-    "Premium medical aesthetics in Brisbane, tailored to you. Book a complimentary consultation at "
-    "Reborn Aesthetics today.",
-    "Skin and cosmetic treatments in Annerley and Fortitude Valley, planned around your "
-    "skin rather than a fixed menu.",
-    "Consultation-led treatment plans across two Brisbane clinics. Book a complimentary consultation at "
-    "Reborn Aesthetics.",
-    "Your skin assessed properly before anything starts. Book a complimentary consultation at Reborn "
-    "Aesthetics in Brisbane.",
-    "Reborn Aesthetics — medical aesthetics in Annerley and Fortitude Valley. Book a "
-    "consultation to find what suits you.",
+    "Reborn Aesthetics offers skin and beauty appointments in Brisbane, Australia. Explore the service menu before booking.",
+    "Visit Reborn Aesthetics in Annerley or Fortitude Valley, Brisbane. Services and available times vary by clinic.",
+    "Find your next Brisbane appointment at Reborn Aesthetics. Choose your clinic and service from the online menu.",
+    "Unsure which appointment to book? Our Brisbane team can help you find the correct option before you reserve a time.",
+    "Reborn Aesthetics has two Brisbane clinics, in Annerley and Fortitude Valley. Check the service details for your selected location.",
 )
-
 
 def _fallback_index(brief_text, count):
     """Stable per-asset choice so the same brief always picks the same line."""
@@ -257,4 +246,3 @@ if __name__ == "__main__":
     print(f"is_supported_video: {is_supported_video_file(filename)}")
     print(f"media_kind: {get_media_kind(filename)}")
     print(f"brief: {filename_to_brief(filename)}")
-
