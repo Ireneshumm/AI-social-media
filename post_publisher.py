@@ -528,15 +528,15 @@ def parse_post_text(text_content):
 # are built separately and rotated below for local reach). The AI writes only
 # the body, so this keeps CTA, contact and locations identical on every post.
 CONTACT_FOOTER = (
-    "🇦🇺 In-clinic treatments in Brisbane, Australia only.\n\n"
-    "All bookings are made online at https://www.rebornaesthetics.com.au/ — just click "
-    "“Book Now”. If you’re unsure which treatment suits you, book a complimentary "
-    "consultation for a personalised plan.\n\n"
-    "📞 0410 415 415 (Brisbane clinic)\n"
-    "📧 info@rebornaesthetics.com.au\n"
-    "🌐 www.rebornaesthetics.com.au\n\n"
-    "📍 Annerley — 69 Juliette Street (Brisbane Southside)\n"
-    "📍 Fortitude Valley — 27 Brunswick Street"
+    "In-clinic appointments in Brisbane, Australia. Services vary by clinic.\n\n"
+    "View services, current prices and available times, then book online: "
+    "https://bookings.gettimely.com/rebornaesthetics/bb/book\n"
+    "Choose your clinic and service, complete the required details and check your "
+    "booking confirmation. If your service or offer is not listed, or you cannot "
+    "complete the booking, call 0410 415 415 before choosing another service.\n\n"
+    "Annerley: 69 Juliette Street, QLD 4103\n"
+    "Fortitude Valley: Upper Floor, 27 Brunswick Street, QLD 4006\n"
+    "Website: https://www.rebornaesthetics.com.au/"
 )
 
 # --- Local-first hashtags ---------------------------------------------------
@@ -609,7 +609,8 @@ Write ONLY the Instagram caption body — engaging, premium, warm and human, the
 Requirements:
 - Open with a scroll-stopping first line (a hook — a question, a relatable moment, or a striking benefit). Not "At Reborn Aesthetics...".
 - Speak to LOCAL Brisbane women so nearby residents feel this is their neighbourhood clinic. Where it reads naturally, root it locally (Brisbane's southside, Annerley, Fortitude Valley, "local to you") — but do NOT stuff suburb names or sound like an ad.
-- Length: short to medium (roughly 2–5 short lines). A few tasteful emoji are fine.
+- Length: short to medium (roughly 2–5 short lines). Use plain text without emoji.
+- Do not describe consultations as free or complimentary, invent prices or offers, or imply every service is available at both clinics.
 - Write ONLY the caption body. Do NOT include hashtags, calls to action, booking instructions, links, phone numbers, email, or address — a fixed footer with all of that is added automatically after your text.
 - No medical claims and no guaranteed results.
 
