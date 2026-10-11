@@ -809,8 +809,8 @@ def publish_one_story(token, selected_story):
     print(f"Media size: {len(media_bytes)} bytes\n")
 
     if media_kind == "video":
-        print("Step 5b: Ensuring video is H.264 (transcode if needed)...")
-        media_path = ensure_h264(media_path)
+        print("Step 5b: Normalising Story video with a visible Brisbane booking prompt...")
+        media_path = ensure_h264(media_path, story_booking_cta=True)
         print()
     else:
         print("Step 5b: Fitting image to a 1080x1920 story canvas (no crop / no squish)...")
