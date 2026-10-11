@@ -147,6 +147,8 @@ jobs:
                   pass
               else:
                   raise AssertionError('Missing font must be explicit')
+          import base64
+          print('PHONE_PREVIEW_PNG=' + base64.b64encode((out / 'portrait-phone.png').read_bytes()).decode('ascii'))
           (out / 'checks.json').write_text(json.dumps(results, indent=2))
           print('Three real FFmpeg renders passed; originals preserved, audio present, no posts or appointments created.')
           PY
