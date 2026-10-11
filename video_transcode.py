@@ -38,7 +38,7 @@ def story_booking_filter():
         raise RuntimeError("Story booking font is missing; not publishing an unlabelled video.")
     style = f"fontfile={font}:fontcolor=0x352C28:x=(w-text_w)/2"
     return (
-        "drawbox=x=70:y=h-490:w=940:h=220:color=0xF5F0E8@0.96:t=fill,"
+        "drawbox=x=70:y=ih-490:w=940:h=220:color=0xF5F0E8@0.96:t=fill,"
         f"drawtext={style}:fontsize=32:y=h-462:text='REBORN AESTHETICS | BRISBANE',"
         f"drawtext={style}:fontsize=42:y=h-408:text='Book your appointment online',"
         f"drawtext={style}:fontsize=42:y=h-349:text='rebornaesthetics.com.au'"
