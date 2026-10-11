@@ -1,0 +1,53 @@
+name: Caption checks
+on:
+  push:
+    paths:
+      - '*.py'
+      - '.github/workflows/caption-checks.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check-captions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check Python syntax and booking copy without publishing
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          trees = {}
+          for path in Path('.').glob('*.py'):
+              source = path.read_text(encoding='utf-8')
+              compile(source, str(path), 'exec')
+              trees[path.name] = ast.parse(source)
+          def constant(filename, name):
+              for node in trees[filename].body:
+                  if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
+                      return ast.literal_eval(node.value)
+              raise AssertionError(name)
+          footer = constant('post_publisher.py', 'CONTACT_FOOTER')
+          assert 'https://bookings.gettimely.com/rebornaesthetics/bb/book' in footer
+          assert 'booking confirmation' in footer and '0410 415 415' in footer
+          assert 'Services vary by clinic' in footer and 'Upper Floor' in footer
+          assert 'complimentary' not in footer.lower()
+          assert not any(0x1F300 <= ord(ch) <= 0x1FAFF or 0x1F1E6 <= ord(ch) <= 0x1F1FF for ch in footer)
+          for name in ('_FALLBACK_WITH_TREATMENT', '_FALLBACK_GENERIC'):
+              variants = constant('asset_helpers.py', name)
+              assert len(variants) == 5
+              for text in variants:
+                  rendered = text.format(t='Skin needling')
+                  assert 'Brisbane' in rendered
+                  assert 'complimentary' not in rendered.lower()
+          fn = next(n for n in trees['post_publisher.py'].body if isinstance(n, ast.FunctionDef) and n.name == 'compose_caption')
+          namespace = {'CONTACT_FOOTER': footer, 'build_local_hashtags': lambda brief: '#annerley #fortitudevalley'}
+          exec(compile(ast.Module(body=[fn], type_ignores=[]), '<isolated compose_caption>', 'exec'), namespace)
+          result = namespace['compose_caption']('Brisbane appointment options.', 'skin needling')
+          assert result.startswith('Brisbane appointment options.\n\n') and footer in result
+          assert result.endswith('#annerley #fortitudevalley')
+          print('All Python files compile. Booking footer, fallback variants and isolated caption composition passed. No publisher or external service called.')
+          PY
