@@ -300,7 +300,7 @@ jobs:
 
       - name: Upload generated ads (if any)
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: generated-ads
           path: out/*.jpg
