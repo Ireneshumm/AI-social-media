@@ -127,6 +127,8 @@ jobs:
               v = next(s for s in probe['streams'] if s['codec_type'] == 'video')
               a = next(s for s in probe['streams'] if s['codec_type'] == 'audio')
               assert (v['codec_name'], v['width'], v['height'], v['pix_fmt']) == ('h264', 1080, 1920, 'yuv420p')
+              pixel = subprocess.run(['ffmpeg', '-v', 'error', '-ss', '1', '-i', encoded, '-vf', 'crop=2:2:100:1440,format=rgb24', '-frames:v', '1', '-f', 'rawvideo', '-'], check=True, capture_output=True, timeout=60).stdout
+              assert len(pixel) == 12 and min(pixel) > 220, 'Pale contrast panel must be visible inside the encoded frame'
               assert a['codec_name'] == 'aac' and int(a['sample_rate']) == 44100
               assert 2.9 <= float(probe['format']['duration']) <= 3.2
               run(['ffmpeg', '-y', '-ss', '1', '-i', encoded, '-frames:v', '1', str(out / (name + '.png'))])
