@@ -10,6 +10,9 @@ safe brand template. This module never raises.
 import os
 import re
 import time
+import math
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 ANTHROPIC_API_KEY = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
 # Default to Opus 5 for the best copy; override with ANTHROPIC_MODEL (e.g.
@@ -20,6 +23,56 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 _RETRY_DELAYS = [5, 10]
+
+
+_BALANCE_ERROR_CODES = {
+    "credit_balance_exhausted", "insufficient_quota",
+    "organization_spend_limit_exceeded", "project_spend_limit_exceeded",
+    "organization_usage_limit_exceeded",
+}
+
+
+def _caption_balance_error(error):
+    """Explicit billing failures require account action, not another request."""
+    details = getattr(error, "body", None)
+    if not isinstance(details, dict):
+        details = {}
+    if isinstance(details.get("error"), dict):
+        details = details["error"]
+    code = getattr(error, "code", None) or details.get("code")
+    kind = getattr(error, "type", None) or details.get("type")
+    if isinstance(code, str) and code in _BALANCE_ERROR_CODES:
+        return True
+    if kind == "insufficient_quota":
+        return True
+    return (
+        getattr(error, "status_code", None) == 400
+        and kind == "invalid_request_error"
+        and "credit balance is too low" in str(details.get("message", "")).lower()
+    )
+
+
+def _caption_retry_delay(error, fallback):
+    """Honor Retry-After without waiting indefinitely on one provider."""
+    headers = getattr(getattr(error, "response", None), "headers", {}) or {}
+    value = headers.get("retry-after")
+    if not value:
+        return fallback
+    try:
+        delay = float(value)
+    except (TypeError, ValueError):
+        try:
+            until = parsedate_to_datetime(str(value))
+            if until.tzinfo is None:
+                until = until.replace(tzinfo=timezone.utc)
+            delay = (until - datetime.now(timezone.utc)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            return fallback
+    if not math.isfinite(delay) or delay < 0:
+        return fallback
+    if delay > 60:
+        return None  # Defer this provider instead of retrying before its deadline.
+    return max(fallback, delay)
 
 
 def _claude_image_blocks(image_uris):
@@ -42,7 +95,7 @@ def _claude_image_blocks(image_uris):
 def _generate_claude(prompt, image_uris=None):
     from anthropic import Anthropic
 
-    client = Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = Anthropic(api_key=ANTHROPIC_API_KEY, max_retries=0)
     content = _claude_image_blocks(image_uris) + [{"type": "text", "text": prompt}]
     resp = client.messages.create(
         model=ANTHROPIC_MODEL,
@@ -56,7 +109,7 @@ def _generate_claude(prompt, image_uris=None):
 def _generate_openai(prompt, image_uris=None):
     from openai import OpenAI
 
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    client = OpenAI(api_key=OPENAI_API_KEY, max_retries=0)
     if image_uris:
         content = [{"type": "input_text", "text": prompt}]
         for uri in image_uris:
@@ -71,7 +124,8 @@ def _generate_openai(prompt, image_uris=None):
 def generate_caption_body(prompt, image_uris=None):
     """Return an AI-written caption body, or None if unavailable.
 
-    Order: Claude (if key) → OpenAI (if key), each with retries. Any failure is
+    Order: Claude (if key) → OpenAI (if key), retrying transient failures only.
+    Explicit balance/quota failures immediately use the next provider. Any failure is
     logged and the next provider (or None) is used — this never raises."""
     providers = []
     if ANTHROPIC_API_KEY:
@@ -92,8 +146,14 @@ def generate_caption_body(prompt, image_uris=None):
                     return body
                 raise RuntimeError("empty response")
             except Exception as e:  # noqa: BLE001
+                if _caption_balance_error(e):
+                    print(f"FAIL: {name} caption requires credits or quota; skipping retries: {e}")
+                    break
                 if attempt < 3:
-                    delay = _RETRY_DELAYS[attempt - 1]
+                    delay = _caption_retry_delay(e, _RETRY_DELAYS[attempt - 1])
+                    if delay is None:
+                        print(f"WARNING: {name} retry deadline exceeds 60s; deferring provider.")
+                        break
                     print(f"WARNING: {name} caption attempt {attempt} failed: {e}; retrying in {delay}s...")
                     time.sleep(delay)
                 else:
