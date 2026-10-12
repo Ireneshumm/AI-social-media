@@ -86,6 +86,74 @@ jobs:
           print('Six isolated retry scenarios passed; no network, real files moved or emails sent.')
           PY
 
+      - name: Verify caption balance fallback and transient retries offline
+        run: |
+          python - <<'PY'
+          import contextlib, io, sys
+          from datetime import datetime, timezone, timedelta
+          from email.utils import format_datetime
+          from types import SimpleNamespace
+          from unittest.mock import Mock, patch
+          import ai_caption as caption
+          
+          class CaptionError(Exception):
+              def __init__(self, status, body=None, code=None, kind=None, retry_after=None):
+                  super().__init__("simulated provider failure")
+                  self.status_code, self.body, self.code, self.type = status, body, code, kind
+                  self.response = SimpleNamespace(headers={} if retry_after is None else {"retry-after": retry_after})
+          
+          claude_balance = CaptionError(400, {"error": {"type": "invalid_request_error", "message": "Your credit balance is too low to access the Anthropic API."}})
+          
+          def exercise(first, second, configured=True):
+              claude = Mock(side_effect=first)
+              openai = Mock(side_effect=second)
+              with patch.object(caption, "ANTHROPIC_API_KEY", "fake" if configured else ""), patch.object(caption, "OPENAI_API_KEY", "fake" if configured else ""), patch.object(caption, "_generate_claude", claude), patch.object(caption, "_generate_openai", openai), patch.object(caption.time, "sleep") as sleep, contextlib.redirect_stdout(io.StringIO()):
+                  result = caption.generate_caption_body("test prompt", ["data:image/png;base64,fixture"])
+              return result, claude, openai, sleep
+          
+          result, first, second, sleep = exercise([claude_balance], ["fallback caption"])
+          assert result == "fallback caption" and first.call_count == second.call_count == 1 and not sleep.called
+          for code in ("credit_balance_exhausted", "insufficient_quota", "organization_spend_limit_exceeded", "project_spend_limit_exceeded", "organization_usage_limit_exceeded"):
+              result, first, second, sleep = exercise([claude_balance], [CaptionError(429, {"error": {"type": "insufficient_quota", "code": code}})])
+              assert result is None and first.call_count == second.call_count == 1 and not sleep.called, code
+          result, first, second, sleep = exercise([claude_balance], [CaptionError(429, {"type": "insufficient_quota"})])
+          assert result is None and second.call_count == 1 and not sleep.called
+          
+          transient = CaptionError(429, {"error": {"type": "rate_limit_error", "code": "slow_down"}})
+          result, first, second, sleep = exercise([transient, "recovered caption"], [])
+          assert result == "recovered caption" and first.call_count == 2 and not second.called and sleep.call_args_list[0].args == (5,)
+          assert first.call_args.args == ("test prompt", ["data:image/png;base64,fixture"])
+          result, first, second, sleep = exercise([CaptionError(503)] * 3, ["backup caption"])
+          assert result == "backup caption" and first.call_count == 3 and second.call_count == 1
+          assert [call.args for call in sleep.call_args_list] == [(5,), (10,)]
+          result, first, second, sleep = exercise(["", "", ""], ["backup caption"])
+          assert result == "backup caption" and first.call_count == 3 and second.call_count == 1
+          result, first, second, sleep = exercise([CaptionError(400, {"error": {"type": "invalid_request_error", "message": "Other invalid argument"}}), "recovered"], [])
+          assert result == "recovered" and first.call_count == 2 and sleep.called
+          result, first, second, sleep = exercise([], [], configured=False)
+          assert result is None and not first.called and not second.called and not sleep.called
+          
+          result, first, second, sleep = exercise([CaptionError(429, retry_after="12"), "recovered"], [])
+          assert result == "recovered" and sleep.call_args.args == (12.0,)
+          result, first, second, sleep = exercise([CaptionError(429, retry_after="120")], ["backup"])
+          assert result == "backup" and first.call_count == second.call_count == 1 and not sleep.called
+          for value in ("invalid", "nan", "-1"):
+              assert caption._caption_retry_delay(CaptionError(429, retry_after=value), 5) == 5
+          future = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=120), usegmt=True)
+          assert caption._caption_retry_delay(CaptionError(429, retry_after=future), 5) is None
+          assert caption._caption_retry_delay(CaptionError(429, retry_after="Thu, 01 Jan 2026 00:00:00 GMT"), 5) == 5
+          
+          fake_openai = Mock(return_value=SimpleNamespace(responses=SimpleNamespace(create=Mock(return_value=SimpleNamespace(output_text="openai caption")))))
+          with patch.dict(sys.modules, {"openai": SimpleNamespace(OpenAI=fake_openai)}):
+              assert caption._generate_openai("test") == "openai caption"
+          fake_openai.assert_called_once_with(api_key=caption.OPENAI_API_KEY, max_retries=0)
+          fake_anthropic = Mock(return_value=SimpleNamespace(messages=SimpleNamespace(create=Mock(return_value=SimpleNamespace(content=[SimpleNamespace(type="text", text="claude caption")])))))
+          with patch.dict(sys.modules, {"anthropic": SimpleNamespace(Anthropic=fake_anthropic)}):
+              assert caption._generate_claude("test") == "claude caption"
+          fake_anthropic.assert_called_once_with(api_key=caption.ANTHROPIC_API_KEY, max_retries=0)
+          print("Caption balance fallback, transient retries, Retry-After and SDK retry ownership passed. No provider, publisher or email called.")
+          PY
+
   check-story-video:
     runs-on: ubuntu-latest
     timeout-minutes: 10
