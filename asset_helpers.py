@@ -179,16 +179,29 @@ _CAPTION_ACRONYMS = {"hifu": "HIFU", "ipl": "IPL", "led": "LED", "rf": "RF"}
 
 
 def _treatment_from_brief(brief_text):
-    """Best-effort treatment phrase from a filename brief: split into words, drop
-    generator/technical tokens and anything containing a digit, keep the rest."""
-    words = []
-    for raw in re.split(r"[^A-Za-z0-9]+", brief_text or ""):
-        if not raw or any(ch.isdigit() for ch in raw):
-            continue
-        if raw.lower() in _CAPTION_STOPWORDS:
-            continue
-        words.append(_CAPTION_ACRONYMS.get(raw.lower(), raw.capitalize()))
-    return " ".join(words).strip()
+    """Use only recognised service names, never arbitrary filename fragments.
+
+    Recycled clips often contain IDs, edit markers (e.g. nosub_a), and dates.
+    Those are asset metadata, not treatments. Unknown briefs use the generic
+    Brisbane brand caption rather than inventing an appointment name.
+    """
+    text = " ".join(re.findall(r"[a-z0-9]+", (brief_text or "").lower()))
+    rules = (
+        (r"\b(?:micro needling|microneedling|skin needling)\b", "Micro-needling"),
+        (r"\bpicoway\b", "PicoWay"),
+        (r"\b(?:tattoo removal|eyebrow removal|brow removal)\b", "Tattoo removal"),
+        (r"\bhifu\b", "HIFU"),
+        (r"\bipl\b", "IPL"),
+        (r"\bled(?: light therapy)?\b", "LED light therapy"),
+        (r"\bems(?: body sculpting)?\b", "EMS body sculpting"),
+        (r"\b(?:facial|facials)\b", "Facial"),
+        (r"\b(?:manicure|nails)\b", "Nail"),
+        (r"\b(?:lash extensions|eyelash extensions)\b", "Lash extension"),
+    )
+    for pattern, treatment in rules:
+        if re.search(pattern, text):
+            return treatment
+    return ""
 
 
 # Several on-brand phrasings so consecutive fallback captions are not identical.
