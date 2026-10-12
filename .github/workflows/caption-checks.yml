@@ -86,6 +86,40 @@ jobs:
           print('Six isolated retry scenarios passed; no network, real files moved or emails sent.')
           PY
 
+      - name: Verify fallback names against real recycled filenames offline
+        run: |
+          python - <<'PY'
+          import asset_helpers as helper
+          unknown = (
+              'repost 7656488803338603794 nosub a 20260725 194652',
+              'repost_7656488803338603794_nosub_a_20260725_194652.mp4',
+              'ai_unknownservice_final_copy_20261013.mp4',
+              'philips_video.mp4',
+              '',
+          )
+          for brief in unknown:
+              assert helper._treatment_from_brief(brief) == '', brief
+              assert helper.brand_fallback_caption(brief) in helper._FALLBACK_GENERIC, brief
+              assert helper.brand_fallback_caption(brief, short=True) == 'Reborn Aesthetics — Brisbane', brief
+          known = {
+              'skin_needling__try2.jpg': 'Micro-needling',
+              'micro-needling.jpg': 'Micro-needling',
+              'microneedling_nosub_a.mp4': 'Micro-needling',
+              'ai_hifu_story_20261013.jpg': 'HIFU',
+              'picoway_pigment_final.png': 'PicoWay',
+              'eyebrow_removal.jpg': 'Tattoo removal',
+              'ipl_hair_reduction.mp4': 'IPL',
+              'led_light_therapy.jpg': 'LED light therapy',
+              'ems_body_sculpting.jpg': 'EMS body sculpting',
+              'signature_facial.jpg': 'Facial',
+          }
+          for brief, treatment in known.items():
+              assert helper._treatment_from_brief(brief) == treatment, brief
+              assert treatment in helper.brand_fallback_caption(brief), brief
+              assert helper.brand_fallback_caption(brief, short=True) == treatment + ' at Reborn Aesthetics', brief
+          print('15 filename cases and both fallback lengths passed; no network, publisher or email invoked.')
+          PY
+
       - name: Verify caption balance fallback and transient retries offline
         run: |
           python - <<'PY'
