@@ -31,7 +31,8 @@ jobs:
                       return ast.literal_eval(node.value)
               raise AssertionError(name)
           footer = constant('post_publisher.py', 'CONTACT_FOOTER')
-          assert 'https://bookings.gettimely.com/rebornaesthetics/bb/book' in footer
+          assert 'https://book.gettimely.com/rebornaesthetics/book/embed?client-login=true' in footer
+          assert 'https://bookings.gettimely.com/rebornaesthetics/bb/book' not in footer
           assert 'booking confirmation' in footer and '0410 415 415' in footer
           assert 'Services vary by clinic' in footer and 'Upper Floor' in footer
           assert 'complimentary' not in footer.lower()
