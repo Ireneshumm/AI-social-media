@@ -530,7 +530,7 @@ def parse_post_text(text_content):
 CONTACT_FOOTER = (
     "In-clinic appointments in Brisbane, Australia. Services vary by clinic.\n\n"
     "View services, current prices and available times, then book online: "
-    "https://bookings.gettimely.com/rebornaesthetics/bb/book\n"
+    "https://book.gettimely.com/rebornaesthetics/book/embed?client-login=true\n"
     "Choose your clinic and service, complete the required details and check your "
     "booking confirmation. If your service or offer is not listed, or you cannot "
     "complete the booking, call 0410 415 415 before choosing another service.\n\n"
