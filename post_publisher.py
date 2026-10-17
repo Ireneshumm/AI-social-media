@@ -528,7 +528,8 @@ def parse_post_text(text_content):
 # are built separately and rotated below for local reach). The AI writes only
 # the body, so this keeps CTA, contact and locations identical on every post.
 CONTACT_FOOTER = (
-    "In-clinic appointments in Brisbane, Australia. Services vary by clinic.\n\n"
+    "In-clinic appointments in Brisbane, Australia. Services vary by clinic.\n"
+    "PicoWay / tattoo removal: Annerley. IPL / massage: Fortitude Valley.\n\n"
     "View services, current prices and available times, then book online: "
     "https://book.gettimely.com/rebornaesthetics/book/embed?client-login=true\n"
     "Choose your clinic and service, complete the required details and check your "
@@ -611,6 +612,8 @@ Requirements:
 - Speak to LOCAL Brisbane women so nearby residents feel this is their neighbourhood clinic. Where it reads naturally, root it locally (Brisbane's southside, Annerley, Fortitude Valley, "local to you") — but do NOT stuff suburb names or sound like an ad.
 - Length: short to medium (roughly 2–5 short lines). Use plain text without emoji.
 - Do not describe consultations as free or complimentary, invent prices or offers, or imply every service is available at both clinics.
+- Service locations: PicoWay and laser tattoo removal are at Annerley only; IPL and massage are at Fortitude Valley. For other services, do not infer a clinic from the media or filename.
+- New tattoo removal clients need a consultation and patch test arranged with the clinic before treatment. Do not suggest booking a free follow-up as a first visit.
 - Write ONLY the caption body. Do NOT include hashtags, calls to action, booking instructions, links, phone numbers, email, or address — a fixed footer with all of that is added automatically after your text.
 - No medical claims and no guaranteed results.
 
