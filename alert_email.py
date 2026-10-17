@@ -28,7 +28,13 @@ REQUIRED_SMTP_ENV_VARS = [
 # Helpers
 # =========================
 def alert_email_enabled():
-    return os.getenv("ALERT_EMAIL_ENABLED", "false").lower() == "true"
+    """Automated delivery is disabled; emails need individual owner approval.
+
+    Do not let a legacy environment secret bypass the draft-only policy.
+    Review failures in Actions logs and prepare any follow-up as an unsent
+    mailbox draft for the owner, rather than sending it from this publisher.
+    """
+    return False
 
 
 def get_missing_smtp_env_vars():
@@ -65,7 +71,7 @@ def build_message(subject, body, recipients):
 # =========================
 def send_alert(subject: str, body: str) -> bool:
     if not alert_email_enabled():
-        print("INFO: Alert email is disabled. Set ALERT_EMAIL_ENABLED=true to enable.")
+        print("INFO: Automated alert email blocked by draft-only policy; no email sent.")
         return False
 
     missing = get_missing_smtp_env_vars()
