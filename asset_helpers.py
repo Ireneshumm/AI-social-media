@@ -229,6 +229,38 @@ def _fallback_index(brief_text, count):
     return int(digest[:8], 16) % count
 
 
+
+# Service-specific booking guidance is used only for an already recognised
+# service name. Unknown media names must keep the generic brand fallback.
+_FALLBACK_SERVICE_BOOKING = {
+    "Tattoo removal": (
+        "Annerley",
+        "Tattoo removal at Reborn Annerley, Brisbane. First visit: call 0410 415 415 "
+        "to arrange a consultation and patch test. Do not select the free follow-up "
+        "for your first visit. Current fees and booking guidance: "
+        "https://www.rebornaesthetics.com.au/skin-body/tattoo-removal-brisbane/",
+    ),
+    "PicoWay": (
+        "Annerley",
+        "PicoWay appointments at Reborn Annerley, Brisbane. Check the current "
+        "consultation options, fees and suitability before choosing your appointment. "
+        "PicoWay is available at Annerley only.",
+    ),
+    "IPL": (
+        "Fortitude Valley",
+        "IPL appointments at Reborn Fortitude Valley, Brisbane. Choose the matching "
+        "IPL skin or hair service and check its current fee before booking. "
+        "IPL is available at Fortitude Valley only.",
+    ),
+    "EMS body sculpting": (
+        "Fortitude Valley",
+        "EMS body sculpting appointments at Reborn Fortitude Valley, Brisbane. "
+        "Check the current service details, fees and suitability before booking. "
+        "EMS is available at Fortitude Valley only.",
+    ),
+}
+
+
 def brand_fallback_caption(brief_text, short=False):
     """A safe, on-brand caption for when AI caption generation is unavailable
     (e.g. the OpenAI account is out of credit). Lets publishing continue with a
@@ -237,8 +269,15 @@ def brand_fallback_caption(brief_text, short=False):
     treatment = _treatment_from_brief(brief_text)
     has_treatment = len(treatment) >= 3
 
+    service_booking = _FALLBACK_SERVICE_BOOKING.get(treatment)
+
     if short:
+        if service_booking:
+            return f"{treatment} at Reborn {service_booking[0]}"
         return f"{treatment} at Reborn Aesthetics" if has_treatment else "Reborn Aesthetics — Brisbane"
+
+    if service_booking:
+        return service_booking[1]
 
     if has_treatment:
         i = _fallback_index(brief_text, len(_FALLBACK_WITH_TREATMENT))
