@@ -528,13 +528,11 @@ def parse_post_text(text_content):
 # are built separately and rotated below for local reach). The AI writes only
 # the body, so this keeps CTA, contact and locations identical on every post.
 CONTACT_FOOTER = (
-    "In-clinic appointments in Brisbane, Australia. Services vary by clinic.\n"
+    "Brisbane, Australia. Services vary by clinic.\n"
     "PicoWay / tattoo removal: Annerley. IPL / massage: Fortitude Valley.\n\n"
-    "View services, current prices and available times, then book online: "
-    "https://book.gettimely.com/rebornaesthetics/book/embed?client-login=true\n"
-    "Choose your clinic and service, complete the required details and check your "
-    "booking confirmation. If your service or offer is not listed, or you cannot "
-    "complete the booking, call 0410 415 415 before choosing another service.\n\n"
+    "Book: https://book.gettimely.com/rebornaesthetics/book/embed?client-login=true\n"
+    "Choose clinic > service > time; finish booking and check your booking confirmation. "
+    "Service missing or booking not working? Call 0410 415 415.\n\n"
     "Annerley: 69 Juliette Street, QLD 4103\n"
     "Fortitude Valley: Upper Floor, 27 Brunswick Street, QLD 4006\n"
     "Website: https://www.rebornaesthetics.com.au/"
