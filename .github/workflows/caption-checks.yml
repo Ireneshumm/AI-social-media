@@ -117,7 +117,18 @@ jobs:
           for brief, treatment in known.items():
               assert helper._treatment_from_brief(brief) == treatment, brief
               assert treatment in helper.brand_fallback_caption(brief), brief
-              assert helper.brand_fallback_caption(brief, short=True) == treatment + ' at Reborn Aesthetics', brief
+              clinic = {'PicoWay': 'Annerley', 'Tattoo removal': 'Annerley',
+                        'IPL': 'Fortitude Valley', 'EMS body sculpting': 'Fortitude Valley'}.get(treatment)
+              expected_short = treatment + (' at Reborn ' + clinic if clinic else ' at Reborn Aesthetics')
+              assert helper.brand_fallback_caption(brief, short=True) == expected_short, brief
+              if clinic:
+                  full = helper.brand_fallback_caption(brief)
+                  assert clinic in full, brief
+                  other = 'Fortitude Valley' if clinic == 'Annerley' else 'Annerley'
+                  assert other not in full, brief
+              if treatment == 'Tattoo removal':
+                  assert 'First visit: call 0410 415 415' in full, brief
+                  assert 'Do not select the free follow-up' in full, brief
           print('15 filename cases and both fallback lengths passed; no network, publisher or email invoked.')
           PY
 
