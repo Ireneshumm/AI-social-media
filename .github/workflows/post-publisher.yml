@@ -272,6 +272,13 @@ jobs:
 
           echo "Selected publisher: ${PUBLISHER_TYPE}"
 
+          # Check the existing Meta credential before downloading or generating media.
+          # Queue maintenance and DRY_RUN keep their existing behavior.
+          if { [ "${PUBLISHER_TYPE}" = "post" ] || [ "${PUBLISHER_TYPE}" = "story" ]; } && [ "${DRY_RUN,,}" != "true" ]; then
+            echo "Checking Meta authorization before processing publish assets..."
+            python token_maintenance.py || exit $?
+          fi
+
           if [ "${PUBLISHER_TYPE}" = "find_location" ]; then
             python find_ig_location.py
           elif [ "${PUBLISHER_TYPE}" = "rank" ]; then
