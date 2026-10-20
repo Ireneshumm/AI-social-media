@@ -148,4 +148,9 @@ jobs:
           FB_PUBLISH_ENABLED: ${{ secrets.FB_PUBLISH_ENABLED }}
         run: |
           echo "Selected publisher: story"
+          # DRY_RUN can still verify assets without a live Meta credential.
+          if [ "${DRY_RUN,,}" != "true" ]; then
+            echo "Checking Meta authorization before processing publish assets..."
+            python token_maintenance.py || exit $?
+          fi
           python story_publisher.py
