@@ -74,16 +74,20 @@ on:
         default: ""
         type: string
   schedule:
-    # 7 daily feed posts, all in Brisbane (AEST, UTC+10) prime-engagement windows.
+    # 9 daily feed posts, all in Brisbane (AEST, UTC+10) prime-engagement windows.
     # Times are UTC; Brisbane = UTC + 10h.
     # (Re-saved 2026-09-24: bumped 5 -> 7 posts/day for the ~50 posts/week target.)
+    # (Re-saved 2026-11: bumped 7 -> 9/day to clear the Meta weekly plan — 49 posts
+    #  in 6 days = ~8.2/day; 9/day = 54/week with buffer.)
     - cron: "30 21 * * *"   # 07:30 Brisbane (morning scroll)
     - cron: "30 23 * * *"   # 09:30 Brisbane (mid-morning)
+    - cron: "0 1 * * *"     # 11:00 Brisbane (late morning)
     - cron: "30 2 * * *"    # 12:30 Brisbane (lunch)
     - cron: "0 5 * * *"     # 15:00 Brisbane (afternoon)
     - cron: "30 7 * * *"    # 17:30 Brisbane (after work)
     - cron: "30 9 * * *"    # 19:30 Brisbane (evening prime)
     - cron: "0 11 * * *"    # 21:00 Brisbane (night scroll)
+    - cron: "30 12 * * *"   # 22:30 Brisbane (late night)
     - cron: "0 3 * * 1"
     - cron: "30 15 * * 0"
     # (feed image auto-generation disabled — feed images are hand-made in ChatGPT
