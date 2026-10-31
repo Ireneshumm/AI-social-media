@@ -18,6 +18,8 @@
 | **后端架构师** Backend Architect | `engineering-backend-architect.md` | Python 功能开发 + 第三方 API 集成(Meta/微软 Graph/OpenAI 等)的重试、幂等、错误处理、可靠性 |
 | **DevOps 自动化工程师** DevOps Automator | `engineering-devops-automator.md` | GitHub Actions 工作流、定时任务(cron)、CI 流程 |
 | **法务合规检查员** Legal Compliance Checker | `support-legal-compliance-checker.md` | 法律 / 隐私 / 支付 / 广告合规审查(**按澳洲法规**,见下) |
+| **数据隐私官** Data Privacy Officer | `data-privacy-officer.md` | 个人数据隐私治理:数据映射、同意与合法依据、数据泄露响应、隐私影响评估(**按澳洲 Privacy Act / APPs**) |
+| **AI 工程师** AI Engineer | `engineering-ai-engineer.md` | LLM / AI 功能:文案生成、prompt 工程、模型集成、内容安全与质量 |
 
 ### 自动派活规则(任务 → 员工)
 
@@ -27,6 +29,8 @@
 - 任何改动在合并前的把关、PR 审查 → **代码审查员**
 - 涉及密钥 / 令牌 / 凭证,或新写的 AI 生成代码 → **AI 代码安全审计员**(复核)
 - 发帖文案是否合规、医美/医疗广告(AHPRA)、隐私、支付、用户条款 → **法务合规检查员**
+- 收集/存储/跨境传输个人数据、同意机制、数据泄露响应、隐私影响评估(DPIA) → **数据隐私官**(与法务合规检查员配合)
+- 改 AI 文案生成 / prompt / 模型集成 / 媒体分析(`ai_caption.py`、`media_analysis.py` 等) → **AI 工程师**
 - 典型组合:后端架构师**写** → 代码审查员 + AI 代码安全审计员**复核** → 极简改动工程师收尾。
 
 ### 铁律(所有员工和 Claude Code 都必须遵守)
