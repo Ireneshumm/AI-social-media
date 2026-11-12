@@ -3,7 +3,20 @@ name: Reborn IG Story Publisher
 on:
   workflow_dispatch:
   schedule:
-    - cron: "25 * * * *"
+    # ~18 Stories/day via 9 fixed Brisbane slots x STORIES_PER_RUN=2 (= ~108/week,
+    # clears the Meta weekly plan of 102). Fixed slots are predictable, unlike the
+    # previous hourly cron whose fire count GitHub throttles unpredictably (which
+    # also risked overshooting IG's ~50 published-items/24h cap). Times are UTC;
+    # Brisbane = UTC + 10h. Minutes kept off :00 to dodge GitHub's busiest crons.
+    - cron: "10 22 * * *"   # 08:10 Brisbane
+    - cron: "40 23 * * *"   # 09:40 Brisbane
+    - cron: "10 1 * * *"    # 11:10 Brisbane
+    - cron: "40 2 * * *"    # 12:40 Brisbane
+    - cron: "10 4 * * *"    # 14:10 Brisbane
+    - cron: "40 5 * * *"    # 15:40 Brisbane
+    - cron: "10 7 * * *"    # 17:10 Brisbane
+    - cron: "10 9 * * *"    # 19:10 Brisbane
+    - cron: "10 11 * * *"   # 21:10 Brisbane
 
 permissions:
   contents: read
@@ -114,10 +127,11 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: ${{ secrets.ANTHROPIC_MODEL }}
           IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
-          # Publish 3 stories per run. GitHub throttles the hourly cron to ~5-6
-          # fires/day, so 3/run gives ~15-18 stories/day (>=100/week), which the
-          # large story archive comfortably supports.
-          STORIES_PER_RUN: "3"
+          # 2 stories per run x 9 fixed daily slots = ~18 stories/day (~108/week,
+          # clears the Meta weekly plan of 102). The large story archive comfortably
+          # supports this, and 9 posts + 18 stories = 27 IG publishes/day stays well
+          # under IG's ~50 published-items/24h limit.
+          STORIES_PER_RUN: "2"
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
           META_APP_ID: ${{ secrets.META_APP_ID }}
           META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
