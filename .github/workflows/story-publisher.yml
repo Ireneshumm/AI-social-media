@@ -127,11 +127,13 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: ${{ secrets.ANTHROPIC_MODEL }}
           IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
-          # 2 stories per run x 9 fixed daily slots = ~18 stories/day (~108/week,
-          # clears the Meta weekly plan of 102). The large story archive comfortably
-          # supports this, and 9 posts + 18 stories = 27 IG publishes/day stays well
-          # under IG's ~50 published-items/24h limit.
-          STORIES_PER_RUN: "2"
+          # 4 stories per run. GitHub only actually fires ~4-5 of the 9 scheduled
+          # story slots per day for this account (it drops the rest under load), so
+          # 2/run delivered only ~8/day in practice — below the ~15-18 target. At
+          # 4/run, ~4-5 fires => ~16-20 stories/day (~112-140/week, clears 102).
+          # Worst case (all 9 slots fire): 9x4=36 stories + 9 posts = 45 IG
+          # publishes/day, still under IG's ~50 published-items/24h limit.
+          STORIES_PER_RUN: "4"
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
           META_APP_ID: ${{ secrets.META_APP_ID }}
           META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
