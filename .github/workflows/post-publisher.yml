@@ -247,6 +247,11 @@ jobs:
           ALERT_EMAIL_ENABLED: ${{ secrets.ALERT_EMAIL_ENABLED }}
           FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
           FB_PUBLISH_ENABLED: ${{ secrets.FB_PUBLISH_ENABLED }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
+          THREADS_PUBLISH_ENABLED: ${{ secrets.THREADS_PUBLISH_ENABLED }}
+          THREADS_VIDEO_AS_TEXT: ${{ secrets.THREADS_VIDEO_AS_TEXT }}
+          THREADS_API_VERSION: ${{ secrets.THREADS_API_VERSION }}
           CLEANUP_RETENTION_DAYS: ${{ secrets.CLEANUP_RETENTION_DAYS }}
           OPENAI_IMAGE_MODEL: ${{ secrets.OPENAI_IMAGE_MODEL }}
           OPENAI_IMAGE_QUALITY: ${{ secrets.OPENAI_IMAGE_QUALITY }}

@@ -23,6 +23,7 @@ from asset_helpers import (
 from wordpress_media import upload_media
 from alert_email import send_alert_safely
 from facebook_publish import publish_facebook_post, FB_PUBLISH_ENABLED
+from threads_publish import publish_threads_post, THREADS_PUBLISH_ENABLED
 from video_transcode import ensure_h264
 from media_analysis import get_caption_image_uris
 from compliance import COMPLIANCE_RULES, scrub_caption, filename_is_noncompliant
@@ -1012,6 +1013,29 @@ def attempt_publish(token, selected_post):
                     "Instagram post succeeded but the Facebook cross-post failed.",
                     f"Media: {selected_post['media']['name']}",
                     f"Error: {fb_error}",
+                    "",
+                    "Please check GitHub Actions logs. The Instagram post was published normally.",
+                ]),
+            )
+
+    if THREADS_PUBLISH_ENABLED:
+        print("Step 8c: Cross-posting to Threads...")
+        try:
+            th_result = publish_threads_post(media_url, caption, media_kind, media_path=media_path)
+            if th_result is None:
+                print("Threads cross-post skipped for this asset.\n")
+            else:
+                print(f"Threads post published: {th_result}\n")
+        except Exception as th_error:
+            # Instagram already succeeded; a Threads failure must not fail the
+            # run. Surface it via logs and a non-fatal alert instead.
+            print(f"WARNING: Threads cross-post failed (Instagram already succeeded): {th_error}\n")
+            send_alert_safely(
+                "Reborn Auto Publisher: Threads cross-post failed (post)",
+                "\n".join([
+                    "Instagram post succeeded but the Threads cross-post failed.",
+                    f"Media: {selected_post['media']['name']}",
+                    f"Error: {th_error}",
                     "",
                     "Please check GitHub Actions logs. The Instagram post was published normally.",
                 ]),
